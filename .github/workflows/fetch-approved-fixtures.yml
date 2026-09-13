@@ -1,0 +1,28 @@
+name: Fetch approved Sudoku fixtures
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fetch-approved-fixtures.yml'
+      - 'docs/approved-fixture-urls.txt'
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch exact approved screenshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p approved-fixtures
+          while read -r name url; do
+            curl -L --fail --retry 3 -o "approved-fixtures/$name" "$url"
+          done < docs/approved-fixture-urls.txt
+          file approved-fixtures/*.png
+          sha256sum approved-fixtures/*.png > approved-fixtures/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: approved-sudoku-fixtures
+          path: approved-fixtures/
+          if-no-files-found: error
