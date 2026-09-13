@@ -92,13 +92,13 @@ class AutofillTest {
         job.join()
         assertEquals(1, taps)
     }
-    @Test fun visualSelectionMustBeUniqueChangedAndColored() {
+    @Test fun visualSelectionMustBeUniqueAndColoredAndMayAlreadyBeSelected() {
         val before = snapshot(0)
         val colors = List(81) { if (it == 0) 0xffaabbff.toInt() else -1 }
         val after = before.copy(backgrounds = colors)
         assertTrue(SelectionVerifier.matches(before, after, 0))
         assertFalse(SelectionVerifier.matches(before, after, 1))
-        assertFalse(SelectionVerifier.matches(after, after, 0))
+        assertTrue(SelectionVerifier.matches(after, after, 0))
         assertFalse(SelectionVerifier.matches(before, after.copy(backgrounds = List(81) { 0xffaabbff.toInt() }), 0))
         assertFalse(SelectionVerifier.matches(before, after.copy(selectedCell = 1), 0))
     }
