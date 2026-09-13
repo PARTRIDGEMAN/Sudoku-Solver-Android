@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Sudoku Solver</string>
+    <string name="accessibility_service_name">Sudoku Solver Autofill</string>
+    <string name="accessibility_service_description">Allows Sudoku Solver to tap detected Sudoku cells and number buttons after you choose to autofill a solved puzzle.</string>
+</resources>
