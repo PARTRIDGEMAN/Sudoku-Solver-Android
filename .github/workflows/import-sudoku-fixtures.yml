@@ -1,0 +1,106 @@
+name: Import Sudoku screenshot fixtures
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/import-sudoku-fixtures.yml
+
+permissions:
+  contents: write
+
+jobs:
+  import-fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download pinned fixture screenshots
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ROOT="app/src/test/resources/sudoku/fixtures/real"
+          mkdir -p \
+            "$ROOT/material-sudoku" \
+            "$ROOT/likhith-sudoku" \
+            "$ROOT/dudozer-sudoku" \
+            "$ROOT/sudoku-eink"
+
+          download() {
+            local url="$1"
+            local output="$2"
+            curl --fail --location --silent --show-error \
+              --retry 3 --retry-delay 1 \
+              "$url" --output "$output"
+          }
+
+          MATERIAL_COMMIT="5564b6a7a3d2f9685a50c21971004363ddfbfc40"
+          LIKHITH_COMMIT="cfea7c60c473e90fa34640d46dede14df690790b"
+          DUDOZER_COMMIT="8c73f73dfd91a46e220c9bc4e8bceeed9bb84452"
+          EINK_COMMIT="4a24dc9d6c802e374ea12d011fb008d7e090ea7d"
+
+          download "https://raw.githubusercontent.com/jdamcd/material-sudoku/$MATERIAL_COMMIT/screenshots/1.png" "$ROOT/material-sudoku/material_01_puzzle.png"
+          download "https://raw.githubusercontent.com/jdamcd/material-sudoku/$MATERIAL_COMMIT/screenshots/2.png" "$ROOT/material-sudoku/material_02_scoreboard.png"
+          download "https://raw.githubusercontent.com/jdamcd/material-sudoku/$MATERIAL_COMMIT/screenshots/3.png" "$ROOT/material-sudoku/material_03_selection.png"
+          download "https://raw.githubusercontent.com/jdamcd/material-sudoku/$MATERIAL_COMMIT/screenshots/4.png" "$ROOT/material-sudoku/material_04_dark_mode.png"
+
+          download "https://raw.githubusercontent.com/likhithpraveenk/sudoku/$LIKHITH_COMMIT/metadata/android/en-US/images/phoneScreenshots/1.png" "$ROOT/likhith-sudoku/likhith_01_mid_game.png"
+          download "https://raw.githubusercontent.com/likhithpraveenk/sudoku/$LIKHITH_COMMIT/metadata/android/en-US/images/phoneScreenshots/2.png" "$ROOT/likhith-sudoku/likhith_02_home.png"
+          download "https://raw.githubusercontent.com/likhithpraveenk/sudoku/$LIKHITH_COMMIT/metadata/android/en-US/images/phoneScreenshots/3.png" "$ROOT/likhith-sudoku/likhith_03_settings.png"
+          download "https://raw.githubusercontent.com/likhithpraveenk/sudoku/$LIKHITH_COMMIT/metadata/android/en-US/images/phoneScreenshots/4.png" "$ROOT/likhith-sudoku/likhith_04_statistics.png"
+
+          download "https://raw.githubusercontent.com/dudozermaks/sudoku/$DUDOZER_COMMIT/integration_test/screenshots/home_page.png" "$ROOT/dudozer-sudoku/dudozer_01_home.png"
+          download "https://raw.githubusercontent.com/dudozermaks/sudoku/$DUDOZER_COMMIT/integration_test/screenshots/solving_page.png" "$ROOT/dudozer-sudoku/dudozer_02_solving.png"
+          download "https://raw.githubusercontent.com/dudozermaks/sudoku/$DUDOZER_COMMIT/integration_test/screenshots/statistics_page.png" "$ROOT/dudozer-sudoku/dudozer_03_statistics.png"
+
+          download "https://raw.githubusercontent.com/ktacrack/SudokuEink/$EINK_COMMIT/images/Game_english.png" "$ROOT/sudoku-eink/eink_01_game_en.png"
+          download "https://raw.githubusercontent.com/ktacrack/SudokuEink/$EINK_COMMIT/images/Joc_catala.png" "$ROOT/sudoku-eink/eink_02_game_ca.png"
+          download "https://raw.githubusercontent.com/ktacrack/SudokuEink/$EINK_COMMIT/images/Menu_english.png" "$ROOT/sudoku-eink/eink_03_menu_en.png"
+          download "https://raw.githubusercontent.com/ktacrack/SudokuEink/$EINK_COMMIT/images/Menu_catala.png" "$ROOT/sudoku-eink/eink_04_menu_ca.png"
+          download "https://raw.githubusercontent.com/ktacrack/SudokuEink/$EINK_COMMIT/images/Stats_english.png" "$ROOT/sudoku-eink/eink_05_stats_en.png"
+          download "https://raw.githubusercontent.com/ktacrack/SudokuEink/$EINK_COMMIT/images/Stats_catala.png" "$ROOT/sudoku-eink/eink_06_stats_ca.png"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+
+          root = Path("app/src/test/resources/sudoku/fixtures/real")
+          files = sorted(root.rglob("*.png"))
+          if len(files) != 17:
+              raise SystemExit(f"expected 17 PNG fixtures, found {len(files)}")
+
+          for path in files:
+              data = path.read_bytes()
+              if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+                  raise SystemExit(f"not a PNG: {path}")
+              if len(data) < 10_000:
+                  raise SystemExit(f"fixture unexpectedly small: {path} ({len(data)} bytes)")
+              width, height = struct.unpack(">II", data[16:24])
+              if width < 300 or height < 300:
+                  raise SystemExit(f"fixture dimensions unexpectedly small: {path} ({width}x{height})")
+              print(f"validated {path}: {width}x{height}, {len(data)} bytes")
+          PY
+
+          (
+            cd "$ROOT"
+            find . -type f -name '*.png' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          )
+
+      - name: Commit fixture assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="app/src/test/resources/sudoku/fixtures/real"
+
+          if [[ -z "$(git status --porcelain -- "$ROOT")" ]]; then
+            echo "Fixtures already match the pinned sources."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$ROOT"
+          git commit -m "test: add licensed Sudoku screenshot fixtures"
+          git push
