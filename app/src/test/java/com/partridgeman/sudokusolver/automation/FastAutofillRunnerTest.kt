@@ -18,22 +18,24 @@ class FastAutofillRunnerTest {
         NumberTarget(digit, ImageRect(15.0 + (digit - 1) * 50, 630.0, 45.0 + (digit - 1) * 50, 670.0), .99)
     }
 
-    private fun plan(): AutofillPlan {
-        val values = solved.toMutableList().also { it[0] = 0; it[80] = 0 }
+    private fun plan(blanks: List<Int>): AutofillPlan {
+        val values = solved.toMutableList()
+        blanks.forEach { values[it] = 0 }
         return requireNotNull(AutofillPlan.create(values.map { CellReading(it, 1.0, "test") }, geometry))
     }
 
-    private fun snapshot(completed: Int, selected: Int? = null, highlighted: Int? = null): FillVisualSnapshot {
-        val expected = plan().expected(completed)
+    private fun snapshot(
+        plan: AutofillPlan,
+        completed: Int,
+        overrides: Map<Int, Boolean> = emptyMap(),
+        highlighted: Int? = null,
+    ): FillVisualSnapshot {
+        val occupied = plan.original.cells.map { it != 0 }.toMutableList()
+        plan.entries.take(completed).forEach { occupied[it.index] = true }
+        overrides.forEach { (index, value) -> occupied[index] = value }
         val backgrounds = MutableList(81) { 0xffffffff.toInt() }
         if (highlighted != null) backgrounds[highlighted] = 0xff99ccff.toInt()
-        return FillVisualSnapshot(
-            window,
-            geometry,
-            expected.cells.map { it != 0 },
-            backgrounds,
-            selected,
-        )
+        return FillVisualSnapshot(window, geometry, occupied, backgrounds, null)
     }
 
     private class Port(private val snapshots: List<FillVisualSnapshot>) : FastAutofillPort {
@@ -44,92 +46,74 @@ class FastAutofillRunnerTest {
     }
 
     @Test
-    fun pipelinesEntryVerificationIntoNextSelection() = runBlocking {
-        val p = plan()
-        // R1C1 begins selected, so the first cell tap is skipped. After entering its
-        // digit, selecting R9C9 and inspecting once simultaneously proves the first
-        // entry and the next selection. The final screenshot proves the last entry.
+    fun usesCellFirstInputAndOnlyChecksAtBatchBoundaries() = runBlocking {
+        val p = plan(listOf(0, 1, 2, 3, 4))
         val port = Port(listOf(
-            snapshot(0, highlighted = 0),
-            snapshot(1, highlighted = 80),
-            snapshot(2, highlighted = 80),
+            snapshot(p, 0),
+            snapshot(p, 4),
+            snapshot(p, 5),
+        ))
+        val progress = mutableListOf<Int>()
+
+        FastAutofillRunner(checkpointSize = 4).run(p, window, keys, port) { completed, _ ->
+            progress += completed
+        }
+
+        assertEquals(3, port.cursor) // initial + after four + final
+        assertEquals(10, port.taps.size) // explicit cell tap + keypad tap for every entry
+        p.entries.forEachIndexed { index, entry ->
+            assertEquals(p.cellTarget(entry), port.taps[index * 2])
+            assertEquals(keys.getValue(entry.digit).bounds.center, port.taps[index * 2 + 1])
+        }
+        assertEquals(listOf(1, 2, 3, 4, 5), progress)
+    }
+
+    @Test
+    fun futureHighlightedCellDoesNotInvalidateCheckpoint() = runBlocking {
+        val p = plan(listOf(0, 1, 2, 3, 4))
+        val future = p.entries[4].index
+        val port = Port(listOf(
+            snapshot(p, 0),
+            // Simulates Sudoku auto-select/row shading being classified as visible
+            // content in a cell we have not issued yet. The ledger must ignore it.
+            snapshot(p, 4, overrides = mapOf(future to true), highlighted = future),
+            snapshot(p, 5),
         ))
 
-        FastAutofillRunner().run(p, window, keys, port)
+        FastAutofillRunner(checkpointSize = 4).run(p, window, keys, port)
 
-        assertEquals(3, port.taps.size)
-        assertEquals(keys.getValue(p.entries[0].digit).bounds.center, port.taps[0])
-        assertEquals(p.cellTarget(p.entries[1]), port.taps[1])
-        assertEquals(keys.getValue(p.entries[1].digit).bounds.center, port.taps[2])
         assertEquals(3, port.cursor)
+        assertEquals(10, port.taps.size)
     }
 
     @Test
-    fun nonPreselectedFirstCellGetsExplicitTapAndVerification() = runBlocking {
-        val p = plan()
+    fun issuedCellStillBlankStopsAtNextCheckpoint() {
+        val p = plan(listOf(0, 1, 2, 3, 4))
+        val missing = p.entries[2].index
         val port = Port(listOf(
-            snapshot(0),
-            snapshot(0, highlighted = 0),
-            snapshot(1, highlighted = 80),
-            snapshot(2, highlighted = 80),
+            snapshot(p, 0),
+            snapshot(p, 4, overrides = mapOf(missing to false)),
         ))
 
-        FastAutofillRunner().run(p, window, keys, port)
-
-        assertEquals(p.cellTarget(p.entries[0]), port.taps[0])
-        assertEquals(keys.getValue(p.entries[0].digit).bounds.center, port.taps[1])
-    }
-
-    @Test
-    fun persistentPreselectedHighlightIsAcceptedOnlyWhenUnique() {
-        val before = snapshot(0, highlighted = 0)
-        val after = snapshot(0, highlighted = 0)
-        assertTrue(FillSelectionVerifier.matches(before, after, 0))
-        assertTrue(FillSelectionVerifier.isSelected(before, 0))
-
-        val ambiguous = after.copy(backgrounds = after.backgrounds.toMutableList().also { it[1] = it[0] })
-        assertTrue(!FillSelectionVerifier.matches(before, ambiguous, 0))
-        assertTrue(!FillSelectionVerifier.isSelected(ambiguous, 0))
-    }
-
-    @Test
-    fun unexpectedOccupiedCellStopsBeforeContinuing() {
-        val p = plan()
-        // R9C9 is the other original blank. Marking it occupied before any fill has
-        // happened must fail immediately; using index 1 here would be a no-op because
-        // it is an original clue in this fixture.
-        val wrong = snapshot(0, highlighted = 0).copy(
-            occupied = snapshot(0).occupied.toMutableList().also { it[80] = true },
-        )
-        val port = Port(listOf(wrong))
-
-        assertThrows(IllegalStateException::class.java) {
-            runBlocking { FastAutofillRunner().run(p, window, keys, port) }
+        val error = assertThrows(IllegalStateException::class.java) {
+            runBlocking { FastAutofillRunner(checkpointSize = 4).run(p, window, keys, port) }
         }
+
+        assertTrue(error.message!!.contains("still looks blank"))
+        assertEquals(8, port.taps.size) // exactly four attempted entries before checkpoint
+    }
+
+    @Test
+    fun originalClueDisappearingStopsBeforeAnyInput() {
+        val p = plan(listOf(0, 1, 2, 3, 4))
+        val clue = p.original.cells.indexOfFirst { it != 0 }
+        val port = Port(listOf(snapshot(p, 0, overrides = mapOf(clue to false))))
+
+        val error = assertThrows(IllegalStateException::class.java) {
+            runBlocking { FastAutofillRunner(checkpointSize = 4).run(p, window, keys, port) }
+        }
+
+        assertTrue(error.message!!.contains("original clue", ignoreCase = true))
         assertTrue(port.taps.isEmpty())
-    }
-
-    @Test
-    fun wrongCellAfterNumberTapFailsBeforeAnotherDigit() {
-        val p = plan()
-        // After the first entry, R1C1 should be occupied and R9C9 should still be
-        // blank. If R9C9 becomes occupied merely from selecting it, validation must
-        // stop before any second keypad digit is emitted.
-        val afterWrong = snapshot(1, highlighted = 80).copy(
-            occupied = snapshot(1).occupied.toMutableList().also { it[80] = true },
-        )
-        val port = Port(listOf(
-            snapshot(0, highlighted = 0),
-            afterWrong,
-        ))
-
-        assertThrows(IllegalStateException::class.java) {
-            runBlocking { FastAutofillRunner().run(p, window, keys, port) }
-        }
-        // First digit target, then only a harmless next-cell selection. No second
-        // keypad digit is emitted after validation detects the wrong change.
-        assertEquals(2, port.taps.size)
-        assertEquals(keys.getValue(p.entries[0].digit).bounds.center, port.taps[0])
-        assertEquals(p.cellTarget(p.entries[1]), port.taps[1])
     }
 }
