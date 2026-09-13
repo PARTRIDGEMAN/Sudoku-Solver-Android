@@ -96,12 +96,12 @@ class OfflinePuzzleReader : AutoCloseable {
         line.elements.flatMap { element ->
             if (element.symbols.isNotEmpty()) {
                 element.symbols.mapNotNull { symbol ->
-                    val box = symbol.boundingBox ?: return@mapNotNull null
+                    val box = symbol.boundingBox?.takeIf { it.width() > 0 && it.height() > 0 } ?: return@mapNotNull null
                     val confidence = symbol.confidence.takeIf { it.isFinite() && it > 0f } ?: element.confidence
                     OcrToken(symbol.text, confidence, box.toImageRect())
                 }
             } else {
-                val box = element.boundingBox
+                val box = element.boundingBox?.takeIf { it.width() > 0 && it.height() > 0 }
                 if (box == null) emptyList() else listOf(OcrToken(element.text, element.confidence, box.toImageRect()))
             }
         }
