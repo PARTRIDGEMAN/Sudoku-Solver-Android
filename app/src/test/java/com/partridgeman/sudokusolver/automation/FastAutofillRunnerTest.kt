@@ -95,8 +95,11 @@ class FastAutofillRunnerTest {
     @Test
     fun unexpectedOccupiedCellStopsBeforeContinuing() {
         val p = plan()
+        // R9C9 is the other original blank. Marking it occupied before any fill has
+        // happened must fail immediately; using index 1 here would be a no-op because
+        // it is an original clue in this fixture.
         val wrong = snapshot(0, highlighted = 0).copy(
-            occupied = snapshot(0).occupied.toMutableList().also { it[1] = true },
+            occupied = snapshot(0).occupied.toMutableList().also { it[80] = true },
         )
         val port = Port(listOf(wrong))
 
@@ -109,8 +112,11 @@ class FastAutofillRunnerTest {
     @Test
     fun wrongCellAfterNumberTapFailsBeforeAnotherDigit() {
         val p = plan()
-        val afterWrong = snapshot(0, highlighted = 80).copy(
-            occupied = snapshot(0).occupied.toMutableList().also { it[1] = true },
+        // After the first entry, R1C1 should be occupied and R9C9 should still be
+        // blank. If R9C9 becomes occupied merely from selecting it, validation must
+        // stop before any second keypad digit is emitted.
+        val afterWrong = snapshot(1, highlighted = 80).copy(
+            occupied = snapshot(1).occupied.toMutableList().also { it[80] = true },
         )
         val port = Port(listOf(
             snapshot(0, highlighted = 0),
