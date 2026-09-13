@@ -1,0 +1,3 @@
+# Preserve portable wrapper scripts when checking out on Windows or Unix.
+/gradlew text eol=lf
+/gradlew.bat text eol=crlf
