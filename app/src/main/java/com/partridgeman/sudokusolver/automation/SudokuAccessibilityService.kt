@@ -171,12 +171,28 @@ class SudokuAccessibilityService : AccessibilityService(), LifecycleOwner, Saved
         val bounds = Rect().also { application.getBoundsInScreen(it) }
         val (width, height) = displaySize()
         val rotation = getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY).rotation
-        // System dialogs, keyboards, and other apps above the target can intercept a gesture.
-        check(windows.none { it.layer > application.layer && it.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY &&
-            Rect().also(it::getBoundsInScreen).let { other -> Rect.intersects(other, bounds) } }) {
-            "Close dialogs, notifications, or the keyboard before scanning."
+
+        // Only windows that can actually replace/intercept the Sudoku UI should block a scan.
+        // Samsung exposes ordinary status/navigation/edge-panel surfaces as higher-layer
+        // TYPE_SYSTEM windows. The previous "any overlapping higher layer" rule therefore
+        // rejected perfectly clean puzzle screens. Accessibility overlays are handled
+        // separately at gesture time, while harmless system chrome is intentionally ignored.
+        check(windows.none { candidate -> isBlockingWindow(candidate, application, bounds) }) {
+            "Close dialogs or the keyboard before scanning."
         }
         return TargetWindow(name, application.id, bounds.toImageRect(), width, height, rotation)
+    }
+
+    private fun isBlockingWindow(candidate: AccessibilityWindowInfo, application: AccessibilityWindowInfo, appBounds: Rect): Boolean {
+        if (candidate === application || candidate.layer <= application.layer) return false
+        return when (candidate.type) {
+            AccessibilityWindowInfo.TYPE_INPUT_METHOD -> true
+            AccessibilityWindowInfo.TYPE_APPLICATION -> {
+                val other = Rect().also(candidate::getBoundsInScreen)
+                Rect.intersects(other, appBounds)
+            }
+            else -> false
+        }
     }
 
     @Suppress("DEPRECATION")
