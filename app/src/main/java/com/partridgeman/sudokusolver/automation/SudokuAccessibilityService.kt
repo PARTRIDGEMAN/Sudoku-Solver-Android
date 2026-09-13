@@ -20,13 +20,17 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import com.partridgeman.sudokusolver.capture.AccessibilityScreenCapture
+import com.partridgeman.sudokusolver.recognition.CellCropAnalyzer
+import com.partridgeman.sudokusolver.recognition.InkKind
 import com.partridgeman.sudokusolver.recognition.OfflinePuzzleReader
 import com.partridgeman.sudokusolver.recognition.PuzzleAnalysis
-import com.partridgeman.sudokusolver.recognition.RecognitionPolicy
 import com.partridgeman.sudokusolver.ui.AssistantOverlay
+import com.partridgeman.sudokusolver.vision.BoardDetection
 import com.partridgeman.sudokusolver.vision.BoardGeometry
+import com.partridgeman.sudokusolver.vision.GridBoardScanner
 import com.partridgeman.sudokusolver.vision.ImagePoint
 import com.partridgeman.sudokusolver.vision.ImageRect
+import com.partridgeman.sudokusolver.vision.android.toPixelImage
 import kotlinx.coroutines.*
 import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
@@ -95,22 +99,66 @@ class SudokuAccessibilityService : AccessibilityService(), LifecycleOwner, Saved
         check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) { "Autofill requires Android 11 or newer." }
         val plan = requireNotNull(analysis.plan)
         val keys = requireNotNull(analysis.keypad)
-        AssistantStore.update { it.copy(filling = true, message = "Verifying puzzle before filling…") }
-        // Allow Compose to shrink the panel before checking its hit area or capturing.
-        delay(250)
-        AutofillRunner().run(plan, window, keys, object : AutofillPort {
-            override suspend fun inspect(): LiveBoard {
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) error("Autofill requires Android 11 or newer.")
-                val (current, parsed) = inspectAnalysis()
-                return LiveBoard(current, RecognitionPolicy.board(parsed.cells)
-                    ?: error("Some cells became unclear. Autofill stopped; rescan the puzzle."),
-                    parsed.detection.geometry, parsed.keyCandidates, parsed.backgrounds,
-                    selectedCell(parsed.detection.geometry))
-            }
+        AssistantStore.update { it.copy(filling = true, message = "Filling ${plan.entries.size} blanks…") }
+        // Allow Compose to collapse/park the overlay before the first visual snapshot.
+        delay(160)
+
+        FastAutofillRunner().run(plan, window, keys, object : FastAutofillPort {
+            override suspend fun inspect(): FillVisualSnapshot = inspectFillVisual(window)
             override suspend fun tap(point: ImagePoint, expectedWindow: TargetWindow) = tapVerified(point, expectedWindow)
-        }) { completed, total -> AssistantStore.update { it.copy(message = "Filled $completed of $total blanks. Stop anytime.") } }
+        }) { completed, total ->
+            AssistantStore.update { it.copy(message = "Filled $completed of $total blanks. Stop anytime.") }
+        }
+
         target = null
-        AssistantStore.update { it.copy(analysis = null, reviewed = false, message = "Puzzle filled and verified. Original digits were preserved.") }
+        AssistantStore.update { it.copy(analysis = null, reviewed = false, message = "Puzzle filled. Original clues were preserved.") }
+    }
+
+    /**
+     * Lightweight autofill inspection: screenshot + grid geometry + per-cell ink only.
+     * No ML Kit, no clue OCR and no Sudoku solving. The expensive recognizer runs once
+     * at scan time; this path is designed to stay well under a second per interaction.
+     */
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
+    private suspend fun inspectFillVisual(expectedWindow: TargetWindow): FillVisualSnapshot {
+        coroutineContext.ensureActive()
+        overlay.hideForCapture(true)
+        val bitmap: android.graphics.Bitmap
+        val current: TargetWindow
+        try {
+            delay(55)
+            current = currentTarget()
+            check(current == expectedWindow) { "The foreground app or screen changed. Autofill stopped." }
+            bitmap = capture.capture()
+            check(bitmap.width == current.width && bitmap.height == current.height) {
+                "The screen dimensions changed. Autofill stopped."
+            }
+        } finally {
+            overlay.hideForCapture(false)
+        }
+
+        val visual = withContext(Dispatchers.Default) {
+            val pixels = try { bitmap.toPixelImage() } finally { bitmap.recycle() }
+            val detection = GridBoardScanner().scan(pixels) as? BoardDetection.Detected
+                ?: error("The Sudoku grid could not be verified during autofill.")
+            val normalized = detection.geometry.normalize(pixels, 900)
+            val inks = (0 until 81).map { CellCropAnalyzer.analyze(normalized, it) }
+            Triple(
+                detection.geometry,
+                inks.map { it.kind != InkKind.BLANK },
+                inks.map { it.background },
+            )
+        }
+
+        check(currentTarget() == expectedWindow) { "The foreground app changed. Autofill stopped." }
+        coroutineContext.ensureActive()
+        return FillVisualSnapshot(
+            window = current,
+            geometry = visual.first,
+            occupied = visual.second,
+            backgrounds = visual.third,
+            selectedCell = selectedCell(visual.first),
+        )
     }
 
     @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
@@ -286,7 +334,7 @@ class SudokuAccessibilityService : AccessibilityService(), LifecycleOwner, Saved
             }
         }) { "Another floating window covers the target. Move it away and rescan." }
         val path = Path().apply { moveTo(point.x.toFloat(), point.y.toFloat()) }
-        val gesture = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 80)).build()
+        val gesture = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 60)).build()
         suspendCancellableCoroutine<Unit> { continuation ->
             val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: GestureDescription?) { if (continuation.isActive) continuation.resume(Unit) }
@@ -296,7 +344,9 @@ class SudokuAccessibilityService : AccessibilityService(), LifecycleOwner, Saved
             }, null)
             if (!dispatched && continuation.isActive) continuation.resumeWithException(IllegalStateException("Android rejected the gesture. Check accessibility access."))
         }
-        delay(180)
+        // Give the Sudoku UI enough time to paint selection/input state without the
+        // 180 ms penalty that previously compounded with full OCR after every tap.
+        delay(85)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
