@@ -21,7 +21,6 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import com.partridgeman.sudokusolver.capture.AccessibilityScreenCapture
 import com.partridgeman.sudokusolver.recognition.CellCropAnalyzer
-import com.partridgeman.sudokusolver.recognition.InkKind
 import com.partridgeman.sudokusolver.recognition.OfflinePuzzleReader
 import com.partridgeman.sudokusolver.recognition.PuzzleAnalysis
 import com.partridgeman.sudokusolver.ui.AssistantOverlay
@@ -146,7 +145,7 @@ class SudokuAccessibilityService : AccessibilityService(), LifecycleOwner, Saved
             val inks = (0 until 81).map { CellCropAnalyzer.analyze(normalized, it) }
             Triple(
                 detection.geometry,
-                inks.map { it.kind != InkKind.BLANK },
+                FillVisualPolicy.occupied(inks.map { it.kind }),
                 inks.map { it.background },
             )
         }
