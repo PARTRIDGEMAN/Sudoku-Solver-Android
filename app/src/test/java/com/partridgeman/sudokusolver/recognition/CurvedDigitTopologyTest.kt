@@ -73,12 +73,14 @@ class CurvedDigitTopologyTest {
         assertNull(CurvedDigitTopology.classify(mask))
     }
 
-    @Test fun topologyResolvesCurvedOcrConflictsButNotStrongOtherDigits() {
+    @Test fun topologyResolvesCurvedOcrConflictsButProtectsClosedTopFour() {
         val eight = CurvedDigitReading(8, 0.97, 2, null)
-        val six = CurvedDigitReading(6, 0.94, 1, 0.68)
+        val six = CurvedDigitReading(6, 0.96, 1, 0.68)
+        val nine = CurvedDigitReading(9, 0.96, 1, 0.31)
 
-        assertEquals(8, CurvedDigitTopology.reconcile(CellReading(6, 0.84, "ocr"), eight).value)
-        assertEquals(6, CurvedDigitTopology.reconcile(CellReading(null, 0.0, "ocr"), six).value)
+        assertEquals(8, CurvedDigitTopology.reconcile(CellReading(6, 0.99, "ocr"), eight).value)
+        assertEquals(6, CurvedDigitTopology.reconcile(CellReading(5, 0.93, "ocr"), six).value)
+        assertEquals(9, CurvedDigitTopology.reconcile(CellReading(3, 0.91, "ocr"), nine).value)
         assertEquals(4, CurvedDigitTopology.reconcile(CellReading(4, 0.95, "ocr"), six).value)
     }
 }
