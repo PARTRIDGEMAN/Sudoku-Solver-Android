@@ -31,6 +31,32 @@ class SudokuSolverTest {
     }
 
     @Test
+    fun solvesLiveExpertRegressionPuzzleUniquely() {
+        // Transcribed from the clean physical-device screenshot that exposed the
+        // old OCR pipeline rejecting nearly every clue.
+        val puzzle = SudokuBoard.fromRows(
+            listOf(
+                listOf(0, 0, 0, 2, 4, 7, 0, 0, 3),
+                listOf(0, 0, 0, 0, 0, 0, 6, 0, 0),
+                listOf(0, 7, 9, 8, 6, 3, 2, 5, 0),
+                listOf(0, 9, 0, 6, 0, 0, 0, 0, 0),
+                listOf(0, 0, 8, 3, 1, 0, 0, 0, 0),
+                listOf(7, 4, 0, 0, 0, 0, 1, 0, 0),
+                listOf(9, 0, 2, 0, 0, 0, 3, 0, 0),
+                listOf(0, 0, 0, 4, 0, 0, 0, 0, 6),
+                listOf(0, 0, 7, 5, 2, 6, 0, 0, 1),
+            )
+        )
+
+        val result = SudokuSolver.analyze(puzzle)
+        assertTrue(result is SolveResult.Unique)
+        val solved = (result as SolveResult.Unique).solution
+        assertTrue(solved.isSolved())
+        assertEquals(listOf(5, 8, 6, 2, 4, 7, 9, 1, 3), (0..8).map { solved[0, it] })
+        assertEquals(listOf(4, 3, 7, 5, 2, 6, 8, 9, 1), (0..8).map { solved[8, it] })
+    }
+
+    @Test
     fun rejectsInvalidPuzzle() {
         val invalid = SudokuBoard.fromRows(
             listOf(
