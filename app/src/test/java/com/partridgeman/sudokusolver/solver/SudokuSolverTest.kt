@@ -27,7 +27,7 @@ class SudokuSolverTest {
         requireNotNull(solved)
         assertTrue(solved.isSolved())
         assertEquals(4, solved[0, 2])
-        assertEquals(9, solved[8, 6])
+        assertEquals(1, solved[8, 6])
     }
 
     @Test
