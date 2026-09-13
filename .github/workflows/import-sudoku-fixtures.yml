@@ -1,4 +1,4 @@
-name: Import Sudoku screenshot fixtures
+name: Import approved Sudoku screenshot fixtures
 
 on:
   push:
@@ -16,91 +16,56 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Download pinned fixture screenshots
+      - name: Download human-approved fixture screenshots
         shell: bash
         run: |
           set -euo pipefail
 
-          ROOT="app/src/test/resources/sudoku/fixtures/real"
-          mkdir -p \
-            "$ROOT/material-sudoku" \
-            "$ROOT/likhith-sudoku" \
-            "$ROOT/dudozer-sudoku" \
-            "$ROOT/sudoku-eink"
+          ROOT="app/src/test/resources/sudoku/fixtures/approved"
+          OLD="app/src/test/resources/sudoku/fixtures/real"
+          URLS="app/src/test/resources/sudoku/fixtures/APPROVED_URLS.txt"
 
-          download() {
-            local url="$1"
-            local output="$2"
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT"
+
+          while read -r name url; do
+            [[ -n "$name" && -n "$url" ]]
             curl --fail --location --silent --show-error \
               --retry 3 --retry-delay 1 \
-              "$url" --output "$output"
-          }
+              "$url" --output "$ROOT/$name"
+          done < "$URLS"
 
-          MATERIAL_COMMIT="5564b6a7a3d2f9685a50c21971004363ddfbfc40"
-          LIKHITH_COMMIT="cfea7c60c473e90fa34640d46dede14df690790b"
-          DUDOZER_COMMIT="8c73f73dfd91a46e220c9bc4e8bceeed9bb84452"
-          EINK_COMMIT="4a24dc9d6c802e374ea12d011fb008d7e090ea7d"
+          count="$(find "$ROOT" -maxdepth 1 -type f -name '*.jpg' | wc -l | tr -d ' ')"
+          [[ "$count" == "4" ]] || { echo "expected 4 approved screenshots, found $count"; exit 1; }
 
-          download "https://raw.githubusercontent.com/jdamcd/material-sudoku/$MATERIAL_COMMIT/screenshots/1.png" "$ROOT/material-sudoku/material_01_puzzle.png"
-          download "https://raw.githubusercontent.com/jdamcd/material-sudoku/$MATERIAL_COMMIT/screenshots/2.png" "$ROOT/material-sudoku/material_02_scoreboard.png"
-          download "https://raw.githubusercontent.com/jdamcd/material-sudoku/$MATERIAL_COMMIT/screenshots/3.png" "$ROOT/material-sudoku/material_03_selection.png"
-          download "https://raw.githubusercontent.com/jdamcd/material-sudoku/$MATERIAL_COMMIT/screenshots/4.png" "$ROOT/material-sudoku/material_04_dark_mode.png"
-
-          download "https://raw.githubusercontent.com/likhithpraveenk/sudoku/$LIKHITH_COMMIT/metadata/android/en-US/images/phoneScreenshots/1.png" "$ROOT/likhith-sudoku/likhith_01_mid_game.png"
-          download "https://raw.githubusercontent.com/likhithpraveenk/sudoku/$LIKHITH_COMMIT/metadata/android/en-US/images/phoneScreenshots/2.png" "$ROOT/likhith-sudoku/likhith_02_home.png"
-          download "https://raw.githubusercontent.com/likhithpraveenk/sudoku/$LIKHITH_COMMIT/metadata/android/en-US/images/phoneScreenshots/3.png" "$ROOT/likhith-sudoku/likhith_03_settings.png"
-          download "https://raw.githubusercontent.com/likhithpraveenk/sudoku/$LIKHITH_COMMIT/metadata/android/en-US/images/phoneScreenshots/4.png" "$ROOT/likhith-sudoku/likhith_04_statistics.png"
-
-          download "https://raw.githubusercontent.com/dudozermaks/sudoku/$DUDOZER_COMMIT/integration_test/screenshots/home_page.png" "$ROOT/dudozer-sudoku/dudozer_01_home.png"
-          download "https://raw.githubusercontent.com/dudozermaks/sudoku/$DUDOZER_COMMIT/integration_test/screenshots/solving_page.png" "$ROOT/dudozer-sudoku/dudozer_02_solving.png"
-          download "https://raw.githubusercontent.com/dudozermaks/sudoku/$DUDOZER_COMMIT/integration_test/screenshots/statistics_page.png" "$ROOT/dudozer-sudoku/dudozer_03_statistics.png"
-
-          download "https://raw.githubusercontent.com/ktacrack/SudokuEink/$EINK_COMMIT/images/Game_english.png" "$ROOT/sudoku-eink/eink_01_game_en.png"
-          download "https://raw.githubusercontent.com/ktacrack/SudokuEink/$EINK_COMMIT/images/Joc_catala.png" "$ROOT/sudoku-eink/eink_02_game_ca.png"
-          download "https://raw.githubusercontent.com/ktacrack/SudokuEink/$EINK_COMMIT/images/Menu_english.png" "$ROOT/sudoku-eink/eink_03_menu_en.png"
-          download "https://raw.githubusercontent.com/ktacrack/SudokuEink/$EINK_COMMIT/images/Menu_catala.png" "$ROOT/sudoku-eink/eink_04_menu_ca.png"
-          download "https://raw.githubusercontent.com/ktacrack/SudokuEink/$EINK_COMMIT/images/Stats_english.png" "$ROOT/sudoku-eink/eink_05_stats_en.png"
-          download "https://raw.githubusercontent.com/ktacrack/SudokuEink/$EINK_COMMIT/images/Stats_catala.png" "$ROOT/sudoku-eink/eink_06_stats_ca.png"
-
-          python3 - <<'PY'
-          from pathlib import Path
-          import struct
-
-          root = Path("app/src/test/resources/sudoku/fixtures/real")
-          files = sorted(root.rglob("*.png"))
-          if len(files) != 17:
-              raise SystemExit(f"expected 17 PNG fixtures, found {len(files)}")
-
-          for path in files:
-              data = path.read_bytes()
-              if not data.startswith(b"\x89PNG\r\n\x1a\n"):
-                  raise SystemExit(f"not a PNG: {path}")
-              if len(data) < 10_000:
-                  raise SystemExit(f"fixture unexpectedly small: {path} ({len(data)} bytes)")
-              width, height = struct.unpack(">II", data[16:24])
-              if width < 300 or height < 300:
-                  raise SystemExit(f"fixture dimensions unexpectedly small: {path} ({width}x{height})")
-              print(f"validated {path}: {width}x{height}, {len(data)} bytes")
-          PY
+          for image in "$ROOT"/*.jpg; do
+            size="$(stat -c%s "$image")"
+            [[ "$size" -gt 20000 ]] || { echo "fixture unexpectedly small: $image ($size bytes)"; exit 1; }
+            file "$image" | grep -q 'JPEG image data' || { echo "fixture is not JPEG: $image"; exit 1; }
+            echo "validated $image: $size bytes"
+          done
 
           (
             cd "$ROOT"
-            find . -type f -name '*.png' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+            sha256sum ./*.jpg > SHA256SUMS.txt
           )
 
-      - name: Commit fixture assets
+          # The user explicitly rejected the previous fixture corpus.
+          rm -rf "$OLD"
+
+      - name: Commit approved fixture assets
         shell: bash
         run: |
           set -euo pipefail
-          ROOT="app/src/test/resources/sudoku/fixtures/real"
+          FIXTURES="app/src/test/resources/sudoku/fixtures"
 
-          if [[ -z "$(git status --porcelain -- "$ROOT")" ]]; then
-            echo "Fixtures already match the pinned sources."
+          if [[ -z "$(git status --porcelain -- "$FIXTURES")" ]]; then
+            echo "Approved fixtures already match the selected screenshots."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$ROOT"
-          git commit -m "test: add licensed Sudoku screenshot fixtures"
+          git add -A "$FIXTURES"
+          git commit -m "test: keep four human-approved Sudoku screenshots"
           git push
