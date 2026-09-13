@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -33,6 +34,9 @@ class AssistantOverlay(private val service: SudokuAccessibilityService) {
     private val manager = service.getSystemService(WindowManager::class.java)
     private var view: ComposeView? = null
     private val preferences = service.getSharedPreferences("overlay", 0)
+    private var captureHidden = false
+    private var fillHidden = false
+    private var fillRestorePosition: OverlayPosition? = null
     private val params = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
         WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT).apply {
@@ -42,7 +46,7 @@ class AssistantOverlay(private val service: SudokuAccessibilityService) {
     }
 
     fun show() {
-        if (view != null) { view?.visibility = View.VISIBLE; return }
+        if (view != null) { applyVisibility(); return }
         val panel = ComposeView(service).apply {
             setViewTreeLifecycleOwner(service)
             setViewTreeSavedStateRegistryOwner(service)
@@ -59,11 +63,62 @@ class AssistantOverlay(private val service: SudokuAccessibilityService) {
         panel.addOnLayoutChangeListener { _, l, t, r, b, oldL, oldT, oldR, oldB ->
             if (r - l != oldR - oldL || b - t != oldB - oldT) reclamp()
         }
-        try { manager.addView(panel, params); panel.post { move(0f, 0f) } }
+        try { manager.addView(panel, params); panel.post { move(0f, 0f); applyVisibility() } }
         catch (error: Exception) { view = null; panel.disposeComposition(); throw error }
     }
 
-    fun hideForCapture(hidden: Boolean) { view?.visibility = if (hidden) View.INVISIBLE else View.VISIBLE }
+    fun hideForCapture(hidden: Boolean) {
+        captureHidden = hidden
+        applyVisibility()
+    }
+
+    /**
+     * During autofill the normal assistant is far too large to safely coexist with
+     * arbitrary Sudoku keypads. Compose renders a tiny Stop pill while filling; after
+     * that resize settles, park it in a screen corner that intersects neither the board
+     * nor any verified number target. If every corner is occupied, hide it for the fill
+     * rather than allowing our own overlay to intercept a gesture.
+     */
+    fun prepareForFill(forbidden: List<ImageRect>) {
+        val panel = view ?: return
+        if (fillRestorePosition == null) fillRestorePosition = OverlayPosition(params.x, params.y)
+        fillHidden = false
+        applyVisibility()
+        if (panel.width <= 0 || panel.height <= 0) return
+
+        val (screenWidth, screenHeight) = service.displaySize()
+        val sideMargin = 16
+        val topMargin = 64
+        val bottomMargin = 96
+        val candidates = listOf(
+            OverlayPosition(sideMargin, topMargin),
+            OverlayPosition((screenWidth - panel.width - sideMargin).coerceAtLeast(sideMargin), topMargin),
+            OverlayPosition(sideMargin, (screenHeight - panel.height - bottomMargin).coerceAtLeast(topMargin)),
+            OverlayPosition((screenWidth - panel.width - sideMargin).coerceAtLeast(sideMargin),
+                (screenHeight - panel.height - bottomMargin).coerceAtLeast(topMargin)),
+        )
+
+        val safe = candidates.firstOrNull { candidate ->
+            val rect = ImageRect(candidate.x.toDouble(), candidate.y.toDouble(),
+                (candidate.x + panel.width).toDouble(), (candidate.y + panel.height).toDouble())
+            forbidden.none { intersects(rect, it.expanded(12.0)) }
+        }
+
+        if (safe == null) {
+            fillHidden = true
+            applyVisibility()
+        } else {
+            setPosition(safe, persist = false)
+        }
+    }
+
+    fun restoreAfterFill() {
+        fillHidden = false
+        val restore = fillRestorePosition
+        fillRestorePosition = null
+        if (restore != null) setPosition(restore, persist = false)
+        applyVisibility()
+    }
 
     fun bounds(): ImageRect? {
         val panel = view?.takeIf { it.visibility == View.VISIBLE && it.width > 0 && it.height > 0 } ?: return null
@@ -74,14 +129,24 @@ class AssistantOverlay(private val service: SudokuAccessibilityService) {
 
     fun reclamp() { view?.post { move(0f, 0f) } }
 
+    private fun applyVisibility() {
+        view?.visibility = if (captureHidden || fillHidden) View.INVISIBLE else View.VISIBLE
+    }
+
     private fun move(dx: Float, dy: Float) {
         val panel = view ?: return
         if ((dx != 0f || dy != 0f) && AssistantStore.state.value.filling) service.stop()
         val (width, height) = service.displaySize()
         val position = OverlayPosition(params.x + dx.roundToInt(), params.y + dy.roundToInt()).clamped(width, height, panel.width, panel.height)
-        params.x = position.x; params.y = position.y
+        setPosition(position, persist = fillRestorePosition == null)
+    }
+
+    private fun setPosition(position: OverlayPosition, persist: Boolean) {
+        val panel = view ?: return
+        params.x = position.x
+        params.y = position.y
         manager.updateViewLayout(panel, params)
-        preferences.edit().putInt("x", params.x).putInt("y", params.y).apply()
+        if (persist) preferences.edit().putInt("x", params.x).putInt("y", params.y).apply()
     }
 
     fun close() {
@@ -90,6 +155,11 @@ class AssistantOverlay(private val service: SudokuAccessibilityService) {
         manager.removeView(panel)
         panel.disposeComposition()
     }
+
+    private fun intersects(a: ImageRect, b: ImageRect): Boolean =
+        a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+
+    private fun ImageRect.expanded(amount: Double) = ImageRect(left - amount, top - amount, right + amount, bottom + amount)
 }
 
 @Composable
@@ -97,8 +167,20 @@ private fun FloatingAssistant(state: AssistantState, onScan: () -> Unit, onFill:
     onClose: () -> Unit, onDrag: (Float, Float) -> Unit, onAuto: (Boolean) -> Unit, onReviewed: (Boolean) -> Unit) {
     var minimized by remember { mutableStateOf(false) }
     var solution by remember { mutableStateOf(false) }
-    val compact = minimized || state.filling
-    Surface(modifier = Modifier.width(if (minimized || state.filling) 200.dp else 260.dp), shadowElevation = 8.dp,
+
+    if (state.filling) {
+        Surface(modifier = Modifier.width(124.dp), shadowElevation = 8.dp, shape = MaterialTheme.shapes.medium) {
+            Row(Modifier.height(44.dp).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Filling…", modifier = Modifier.weight(1f), fontSize = 12.sp, maxLines = 1)
+                TextButton(onClick = onStop, modifier = Modifier.width(52.dp), contentPadding = PaddingValues(0.dp)) {
+                    Text("Stop", fontSize = 11.sp)
+                }
+            }
+        }
+        return
+    }
+
+    Surface(modifier = Modifier.width(if (minimized) 200.dp else 260.dp), shadowElevation = 8.dp,
         shape = MaterialTheme.shapes.medium) {
         Column {
             Row(Modifier.fillMaxWidth().height(40.dp).background(MaterialTheme.colorScheme.primaryContainer)) {
@@ -109,7 +191,7 @@ private fun FloatingAssistant(state: AssistantState, onScan: () -> Unit, onFill:
                 TextButton(onClick = onClose, modifier = Modifier.width(40.dp), contentPadding = PaddingValues(0.dp)) { Text("×") }
             }
             Column(Modifier.padding(10.dp).heightIn(max = 430.dp).verticalScroll(rememberScrollState())) {
-                Text(state.message, fontSize = 12.sp, maxLines = if (compact) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
+                Text(state.message, fontSize = 12.sp, maxLines = if (minimized) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
                 if (state.busy) Button(onClick = onStop, modifier = Modifier.fillMaxWidth().height(36.dp), contentPadding = PaddingValues(0.dp)) { Text("Stop") }
                 else {
                     Button(onClick = onScan, modifier = Modifier.fillMaxWidth()) { Text("Scan puzzle") }
