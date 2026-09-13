@@ -6,9 +6,9 @@ import org.junit.Test
 
 class FillVisualPolicyTest {
     @Test
-    fun selectionDecorationDoesNotCountAsOccupied() {
+    fun anyVisibleMarkCountsAsPresentForCheckpointLedger() {
         assertEquals(
-            listOf(false, false, true),
+            listOf(false, true, true),
             FillVisualPolicy.occupied(listOf(InkKind.BLANK, InkKind.AMBIGUOUS, InkKind.DIGIT)),
         )
     }
