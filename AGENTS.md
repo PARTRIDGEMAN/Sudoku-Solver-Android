@@ -22,4 +22,4 @@ Build a universal Android Sudoku assistant with Manual and Auto modes. It must d
 - Document non-obvious Android permission/service behavior in `docs/`.
 
 ## Current phase
-Phase 1 is scaffolded. Continue from `docs/ROADMAP.md`; Phase 2 (screen capture) is next.
+Phase 2 screen capture is implemented. Continue from `docs/ROADMAP.md`; physical-device capture validation is next, before Phase 3 board detection.
