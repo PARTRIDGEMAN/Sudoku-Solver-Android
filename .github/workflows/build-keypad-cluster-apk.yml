@@ -1,0 +1,24 @@
+name: Build Keypad Cluster APK
+
+on:
+  push:
+    branches: [ build/apk-keypad-cluster ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "platform-tools"
+      - run: chmod +x gradlew && ./gradlew test assembleDebug lintDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sudoku-solver-keypad-cluster-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
