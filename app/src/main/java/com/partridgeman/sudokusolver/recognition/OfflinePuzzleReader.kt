@@ -55,9 +55,13 @@ class OfflinePuzzleReader : AutoCloseable {
         )
         val normalizedDigits = BoardOcrMapper.map(extractTokens(normalizedText), normalizedGeometry)
 
-        val cells = inks.mapIndexed { index, ink ->
+        val shapes = inks.map { ink ->
+            if (ink.kind == InkKind.BLANK) null else CurvedDigitTopology.classify(ink.mask)
+        }
+
+        val rawCells = inks.mapIndexed { index, ink ->
             val contextual = RecognitionPolicy.resolve(sourceDigits[index], normalizedDigits[index])
-            val shape = if (ink.kind == InkKind.BLANK) null else CurvedDigitTopology.classify(ink.mask)
+            val shape = shapes[index]
             val resolved = CurvedDigitTopology.reconcile(contextual, shape)
             when (ink.kind) {
                 InkKind.BLANK -> CellReading(0, 1.0, ink.reason)
@@ -77,6 +81,25 @@ class OfflinePuzzleReader : AutoCloseable {
                 }
             }
         }
+
+        // Last-resort conservative repair: if every remaining unclear cell is a
+        // visible curved glyph, try only the topology-compatible family values.
+        // Accept a repair only when exactly one such assignment produces a unique
+        // Sudoku. This fixes stable OCR misses without guessing blank cells.
+        val curvedCandidates = rawCells.indices.mapNotNull { index ->
+            if (rawCells[index].accepted) return@mapNotNull null
+            val shape = shapes[index] ?: return@mapNotNull null
+            if (shape.confidence < 0.86) return@mapNotNull null
+            val rawTexts = listOfNotNull(sourceDigits[index]?.text, normalizedDigits[index]?.text)
+            if ("4" in rawTexts) return@mapNotNull null // closed-top 4 protection
+            val options = when {
+                shape.holeCount >= 2 -> setOf(8)
+                shape.holeCount == 1 -> setOf(6, 9)
+                else -> emptySet()
+            }
+            if (options.isEmpty()) null else index to options
+        }.toMap()
+        val cells = RecognitionConstraintRepair.repair(rawCells, curvedCandidates)
 
         val board = RecognitionPolicy.board(cells)
         val plan = AutofillPlan.create(cells, detection.geometry)
