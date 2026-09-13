@@ -22,13 +22,36 @@ object SelectionVerifier {
     fun matches(before: LiveBoard, after: LiveBoard, index: Int): Boolean {
         if (after.selectedCell != null) return after.selectedCell == index
         if (before.backgrounds.size != 81 || after.backgrounds.size != 81) return false
-        val color = after.backgrounds[index]
-        fun distance(a: Int, b: Int) = (0..16 step 8).maxOf { abs((a ushr it and 255) - (b ushr it and 255)) }
-        val channels = (0..16 step 8).map { color ushr it and 255 }
-        // Conservative visual fallback: the tapped blank must acquire a unique colored selection fill.
-        return distance(before.backgrounds[index], color) >= 18 && channels.max() - channels.min() >= 24 &&
-            after.backgrounds.indices.filter { it != index }.all { distance(after.backgrounds[it], color) >= 12 }
+
+        // Some Sudoku apps (including the one used in device testing) visually select
+        // the first empty cell as soon as a puzzle opens, but do not expose that state
+        // through AccessibilityNodeInfo.isSelected. In that case tapping the already-
+        // selected target causes no color transition at all. Accept either:
+        //   1) a newly acquired, unique visual selection highlight, or
+        //   2) the same target being uniquely highlighted both before and after.
+        val afterHighlighted = visuallySelected(after, index)
+        if (!afterHighlighted) return false
+        if (visuallySelected(before, index)) return true
+
+        return distance(before.backgrounds[index], after.backgrounds[index]) >= 18
     }
+
+    private fun visuallySelected(snapshot: LiveBoard, index: Int): Boolean {
+        if (snapshot.backgrounds.size != 81 || index !in snapshot.backgrounds.indices) return false
+        val color = snapshot.backgrounds[index]
+        val channels = (0..16 step 8).map { color ushr it and 255 }
+        if (channels.max() - channels.min() < 24) return false
+
+        // The actual selected square should have a stronger fill than ordinary white
+        // cells and than row/column peer highlighting. Fail closed if another cell is
+        // effectively the same color.
+        return snapshot.backgrounds.indices
+            .filter { it != index }
+            .all { distance(snapshot.backgrounds[it], color) >= 12 }
+    }
+
+    private fun distance(a: Int, b: Int): Int =
+        (0..16 step 8).maxOf { abs((a ushr it and 255) - (b ushr it and 255)) }
 }
 
 /** No input is emitted until a fresh board exactly matches the validated plan's expected progress. */
