@@ -9,9 +9,9 @@ import kotlin.math.abs
 /**
  * Cheap state used while a previously validated Sudoku is being filled.
  *
- * Full OCR belongs at scan time. During autofill we only need to prove that the
- * same app/grid is still on screen, the expected cells are occupied, and the
- * intended cell is selected before a verified keypad coordinate is tapped.
+ * Full OCR belongs at scan time. During autofill we keep a ledger of the entries we
+ * have issued and periodically prove that those cells are no longer blank while the
+ * original clues and board geometry are still intact.
  */
 data class FillVisualSnapshot(
     val window: TargetWindow,
@@ -61,13 +61,28 @@ object FillSelectionVerifier {
 }
 
 /**
- * Autofill runner that never invokes OCR or the Sudoku solver inside the hot loop.
+ * Stateful/checkpointed autofill runner.
  *
- * The loop is pipelined so, after the first cell, one screenshot verifies both the
- * previous number entry and selection of the next cell. This keeps visual safety
- * checks while avoiding two screenshot round-trips for every blank.
+ * Every entry is still cell-first: explicitly tap the planned cell, then the already
+ * verified keypad coordinate for its planned digit. We do not re-read the entire board
+ * after every tap because normal Sudoku selection/row/column highlighting makes that
+ * brittle. Instead, the validated plan itself is the ledger and one cheap screenshot
+ * every few entries verifies that:
+ *  - the same app and same grid are still present,
+ *  - all original clues are still visibly present, and
+ *  - every ledger entry issued so far is visibly non-blank.
+ *
+ * Cells that have not been issued yet are intentionally ignored at checkpoints; apps
+ * are free to auto-select/highlight them. A missed cell tap is still caught because the
+ * intended issued cell remains blank at the next checkpoint.
  */
-class FastAutofillRunner {
+class FastAutofillRunner(
+    private val checkpointSize: Int = DEFAULT_CHECKPOINT_SIZE,
+) {
+    init {
+        require(checkpointSize > 0)
+    }
+
     suspend fun run(
         plan: AutofillPlan,
         target: TargetWindow,
@@ -78,65 +93,57 @@ class FastAutofillRunner {
         require(keys.keys == (1..9).toSet()) { "Number buttons were not verified" }
         if (plan.entries.isEmpty()) return
 
-        var state = port.inspect()
-        validate(state, plan, target, 0)
-        var currentAlreadySelected = FillSelectionVerifier.isSelected(state, plan.entries.first().index)
+        // Initial checkpoint proves we are still on the validated puzzle before any
+        // gestures are emitted. Future blank/highlight state is deliberately ignored.
+        validateCheckpoint(port.inspect(), plan, target, completed = 0)
 
-        for ((completed, entry) in plan.entries.withIndex()) {
+        for ((zeroBased, entry) in plan.entries.withIndex()) {
             coroutineContext.ensureActive()
-            validate(state, plan, target, completed)
 
-            val selected = if (currentAlreadySelected) {
-                check(FillSelectionVerifier.isSelected(state, entry.index)) {
-                    "Could not verify the selected cell. Use cell-first input and rescan."
-                }
-                state
-            } else {
-                port.tap(plan.cellTarget(entry), target)
-                val snapshot = port.inspect()
-                validate(snapshot, plan, target, completed)
-                check(FillSelectionVerifier.matches(state, snapshot, entry.index)) {
-                    "Could not verify the selected cell. Use cell-first input and rescan."
-                }
-                snapshot
-            }
-
+            // Always select the target explicitly. We do not depend on any app's
+            // auto-advance behavior, which varies between Sudoku implementations.
+            port.tap(plan.cellTarget(entry), target)
             coroutineContext.ensureActive()
             port.tap(keys.getValue(entry.digit).bounds.center, target)
 
-            val nextEntry = plan.entries.getOrNull(completed + 1)
-            if (nextEntry == null) {
-                val after = port.inspect()
-                validate(after, plan, target, completed + 1)
-                progress(completed + 1, plan.entries.size)
-                state = after
-                currentAlreadySelected = false
-            } else {
-                // Select the next blank before capturing. The next screenshot now proves
-                // both that this number was entered into the intended cell and that the
-                // next target is selected. If the number tap failed or another cell
-                // changed, occupancy validation fails before another digit is emitted.
-                port.tap(plan.cellTarget(nextEntry), target)
-                val nextSelected = port.inspect()
-                validate(nextSelected, plan, target, completed + 1)
-                check(FillSelectionVerifier.isSelected(nextSelected, nextEntry.index)) {
-                    "Could not verify the next selected cell. Autofill stopped."
-                }
-                progress(completed + 1, plan.entries.size)
-                state = nextSelected
-                currentAlreadySelected = true
+            val completed = zeroBased + 1
+            progress(completed, plan.entries.size)
+
+            if (completed % checkpointSize == 0 || completed == plan.entries.size) {
+                validateCheckpoint(port.inspect(), plan, target, completed)
             }
         }
     }
 
-    private fun validate(snapshot: FillVisualSnapshot, plan: AutofillPlan, target: TargetWindow, completed: Int) {
+    internal fun validateCheckpoint(
+        snapshot: FillVisualSnapshot,
+        plan: AutofillPlan,
+        target: TargetWindow,
+        completed: Int,
+    ) {
+        check(completed in 0..plan.entries.size)
         check(snapshot.window == target) { "The foreground app or screen changed. Rescan before filling." }
         check(sameGeometry(plan.geometry, snapshot.geometry)) { "The Sudoku grid moved. Autofill stopped." }
         check(snapshot.occupied.size == 81) { "Could not verify the Sudoku cells. Autofill stopped." }
 
-        val expected = plan.expected(completed).cells.map { it != 0 }
-        check(snapshot.occupied == expected) {
-            "The puzzle changed unexpectedly while filling. Autofill stopped."
+        // Clues are immutable anchors. We only require visible content here; highlighted
+        // clues may be classified as ambiguous by the cheap visual path and are still OK.
+        plan.original.cells.forEachIndexed { index, value ->
+            if (value != 0) {
+                check(snapshot.occupied[index]) {
+                    "An original clue at ${label(index)} disappeared. Autofill stopped."
+                }
+            }
+        }
+
+        // The plan is our transaction ledger. Every cell whose input has already been
+        // issued must now contain visible content. We deliberately do not compare future
+        // cells: a selected/highlighted blank may look non-empty even though the puzzle
+        // itself has not changed.
+        for (entry in plan.entries.take(completed)) {
+            check(snapshot.occupied[entry.index]) {
+                "${label(entry.index)} still looks blank after input. Autofill stopped."
+            }
         }
     }
 
@@ -144,5 +151,11 @@ class FastAutofillRunner {
         val tolerance = minOf(expected.bounds.width, expected.bounds.height) / 9 * 0.06
         return expected.horizontal.zip(current.horizontal).all { (a, b) -> abs(a - b) <= tolerance } &&
             expected.vertical.zip(current.vertical).all { (a, b) -> abs(a - b) <= tolerance }
+    }
+
+    private fun label(index: Int): String = "R${index / 9 + 1}C${index % 9 + 1}"
+
+    companion object {
+        const val DEFAULT_CHECKPOINT_SIZE = 4
     }
 }
