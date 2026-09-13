@@ -145,10 +145,43 @@ class OfflinePuzzleReader : AutoCloseable {
         }
     }
 
-    private fun readKeypad(text: Text): List<NumberTarget> = text.textBlocks.flatMap { it.lines }.flatMap { it.elements }.mapNotNull { element ->
-        val digit = element.text.takeIf { it.matches(Regex("[1-9]")) }?.toInt() ?: return@mapNotNull null
-        val box = element.boundingBox?.takeIf { it.width() > 0 && it.height() > 0 } ?: return@mapNotNull null
-        NumberTarget(digit, box.toImageRect(), element.confidence.toDouble())
+    /**
+     * Read keypad labels at symbol granularity. ML Kit often treats a visual keypad row
+     * as one text element (for example "123456789"); the old implementation discarded
+     * that entire element because it was not exactly one character. Symbols preserve the
+     * real per-digit bounds. A proportional split is retained only as a fallback for SDK
+     * outputs that expose a compact digit string without symbol boxes.
+     */
+    private fun readKeypad(text: Text): List<NumberTarget> = text.textBlocks.flatMap { it.lines }.flatMap { line ->
+        line.elements.flatMap { element ->
+            val symbolTargets = element.symbols.mapNotNull { symbol ->
+                val digit = symbol.text.takeIf { it.matches(Regex("[1-9]")) }?.toInt() ?: return@mapNotNull null
+                val box = symbol.boundingBox?.takeIf { it.width() > 0 && it.height() > 0 } ?: return@mapNotNull null
+                val confidence = symbol.confidence.takeIf { it.isFinite() && it > 0f }
+                    ?: element.confidence.takeIf { it.isFinite() && it > 0f }
+                    ?: 0f
+                NumberTarget(digit, box.toImageRect(), confidence.toDouble())
+            }
+            if (symbolTargets.isNotEmpty()) return@flatMap symbolTargets
+
+            val raw = element.text.trim()
+            val box = element.boundingBox?.takeIf { it.width() > 0 && it.height() > 0 } ?: return@flatMap emptyList()
+            val confidence = element.confidence.takeIf { it.isFinite() && it > 0f }?.toDouble() ?: 0.0
+            when {
+                raw.matches(Regex("[1-9]")) -> listOf(NumberTarget(raw.toInt(), box.toImageRect(), confidence))
+                raw.matches(Regex("[1-9]{2,9}")) -> {
+                    val step = box.width().toDouble() / raw.length
+                    raw.mapIndexed { index, char ->
+                        NumberTarget(
+                            char.digitToInt(),
+                            ImageRect(box.left + index * step, box.top.toDouble(), box.left + (index + 1) * step, box.bottom.toDouble()),
+                            confidence,
+                        )
+                    }
+                }
+                else -> emptyList()
+            }
+        }
     }
 
     private suspend fun process(bitmap: Bitmap, recycle: Boolean = false): Text {
