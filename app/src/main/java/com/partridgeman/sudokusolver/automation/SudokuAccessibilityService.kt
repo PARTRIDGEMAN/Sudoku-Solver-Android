@@ -104,6 +104,7 @@ class SudokuAccessibilityService : AccessibilityService(), LifecycleOwner, Saved
         delay(160)
 
         FastAutofillRunner().run(plan, window, keys, object : FastAutofillPort {
+            @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
             override suspend fun inspect(): FillVisualSnapshot = inspectFillVisual(window)
             override suspend fun tap(point: ImagePoint, expectedWindow: TargetWindow) = tapVerified(point, expectedWindow)
         }) { completed, total ->
