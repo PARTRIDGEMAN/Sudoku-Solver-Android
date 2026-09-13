@@ -2,5 +2,5 @@
 <resources>
     <string name="app_name">Sudoku Solver</string>
     <string name="accessibility_service_name">Sudoku Solver Autofill</string>
-    <string name="accessibility_service_description">Allows Sudoku Solver to tap detected Sudoku cells and number buttons after you choose to autofill a solved puzzle.</string>
+    <string name="accessibility_service_description">Shows a movable Sudoku assistant over other apps. Reads the visible screen locally to recognize puzzles and number buttons. With your Autofill confirmation, or Scan in Auto mode, it taps verified blank cells and checks each entry. Stop or disable this service anytime.</string>
 </resources>

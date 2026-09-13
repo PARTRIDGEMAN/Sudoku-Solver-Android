@@ -7,13 +7,13 @@
 3. Sudoku Solver moves its task to the background. Bring the desired puzzle into
    view within five seconds; keep it visible until capture ends.
 4. Return to Sudoku Solver to see **Last successful capture**, including its
-   pixel dimensions. No OCR, board detection, solving, or gestures run.
+   pixel dimensions, detected geometry, recognized digits, and a unique solution when available. This preview does not send gestures.
 
 The five-second delay starts when the service obtains the projection. If the
 previous task is not the puzzle, open the puzzle manually during that interval.
 The screenshot reflects whatever is visible when the first frame arrives;
-Phase 2 cannot verify that it contains a puzzle. Manual and Auto currently use
-the same capture flow.
+The downstream detector rejects screenshots without a clear grid. Live overlay
+scans use a separate accessibility capture path; see `LIVE_ASSISTANT.md`.
 
 Cancel from the foreground notification or return to the app and tap **Cancel
 capture**. Android's projection stop control also ends the attempt. Denial,

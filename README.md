@@ -31,10 +31,16 @@ See `docs/ARCHITECTURE.md` and `docs/ROADMAP.md` for the planned implementation.
 Use JDK 17 and the checked-in Gradle wrapper. See [Build setup](docs/BUILDING.md)
 for Android SDK requirements and clean build commands.
 
-## Screen capture preview
+## Live testing
 
-Tap **Scan Puzzle**, allow Android's screen capture prompt, and open your Sudoku
-app within five seconds. Return to Sudoku Solver to see the last successful
-screenshot. Both modes currently capture only; recognition and autofill are
-future work. See [Screen capture](docs/SCREEN_CAPTURE.md) for behavior and device
-verification steps.
+Build/install `app/build/outputs/apk/debug/app-debug.apk` (version 0.2.0).
+Enable **Sudoku Solver Autofill** in Accessibility settings, tap **Show movable
+assistant**, and open your Sudoku app. Drag the panel away from the board and
+keypad. Use cell-first input with pencil mode off. **Scan puzzle**, check the
+recognized digits, then **Autofill blanks**. **Stop** cancels further input.
+Auto mode explicitly enables fill after Scan.
+
+Live autofill requires Android 11+. The separate **Scan Puzzle** capture flow in
+the main app provides screenshot and solution previews on Android 7+.
+Recognition and filling are conservative and still need physical-device testing
+across apps. See [Live assistant](docs/LIVE_ASSISTANT.md) for setup and limitations.

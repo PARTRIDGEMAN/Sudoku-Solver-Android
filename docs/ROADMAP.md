@@ -1,53 +1,26 @@
 # Roadmap
 
-## Phase 1 — Foundation
-- [x] Android/Kotlin/Compose scaffold
-- [x] Sudoku board model and validation
-- [x] Deterministic solver
-- [x] Solver unit tests
-- [x] Accessibility service boundary
+## Implemented
+- Kotlin / Compose app, immutable board model, deterministic unique-solution solver.
+- One-shot MediaProjection capture and preview. User confirmed successful scanning
+  on a physical phone; the full capture lifecycle checklist remains to be completed.
+- Deterministic axis-aligned grid detection, normalization, runtime cell geometry,
+  and regression checks using two approved screenshots and synthetic negatives.
+- Bundled offline OCR, blank/notes checks, confidence and solution validation.
+- Draggable, minimized/expanded accessibility overlay with Scan, solution preview,
+  Manual review and Autofill, explicit Auto-after-Scan, and Stop.
+- Runtime accessibility/OCR keypad discovery, blank-only fill plans, selected-cell
+  verification, and per-entry recapture. Live autofill requires Android 11+.
 
-## Phase 2 — Capture
-- [x] MediaProjection permission flow
-- [x] Foreground capture service for modern Android
-- [x] One-shot screen capture
-- [x] In-memory debug preview of the last successful capture
-- [ ] Physical-device verification: consent, repeated captures, cancellation, and resource cleanup (see `docs/SCREEN_CAPTURE.md`)
+## Next: physical-device validation and hardening
+- [ ] Validate OCR, overlay lifecycle, and real gestures in Manual mode on a phone.
+- [ ] Verify Stop, window/layout changes, rotation, notes mode, and ambiguous scans.
+- [ ] Complete the capture cancellation/repeated-capture/resource cleanup checklist.
+- [ ] Test several unrelated apps, dark themes, different fonts, and resolutions.
+- [ ] Expand human-approved positive and real negative fixtures.
+- [ ] Support additional keypad layouts and selection styles with reliable evidence.
+- [ ] Perspective correction for skewed boards, if needed.
+- [ ] Configurable gesture delay after device behavior has been measured.
 
-Capture implementation is ready for device validation. Screenshot file export is deferred;
-issue #1 only requires a preview. Complete the device checks before board recognition work.
-
-## Phase 3 — Universal board detection
-- [ ] Threshold/grayscale preprocessing
-- [ ] Locate dominant square Sudoku grid
-- [ ] Perspective correction
-- [ ] Calculate 81 cell rectangles dynamically
-- [ ] Unit/instrumentation tests using sample screenshots from multiple apps
-
-## Phase 4 — Digit recognition
-- [ ] Blank-cell detection
-- [ ] Normalize digit crops
-- [ ] Classify digits 1–9
-- [ ] Confidence scoring
-- [ ] Reject ambiguous scans
-
-## Phase 5 — Manual mode
-- [ ] Floating accessibility overlay
-- [ ] Scan button
-- [ ] Solved-board preview
-- [ ] “Autofill?” confirmation
-- [ ] Detect target cell and number-button geometry
-- [ ] Fill only originally empty cells
-
-## Phase 6 — Auto mode
-- [ ] Explicit Auto toggle
-- [ ] Scan → validate → solve → fill flow
-- [ ] Abort immediately on layout change or recognition uncertainty
-- [ ] Adjustable gesture delay
-
-## Phase 7 — Hardening
-- [ ] Test several unrelated Sudoku apps
-- [ ] Handle dark mode and colored themes
-- [ ] Handle animations and selected-cell highlights
-- [ ] Rotation / different resolutions / aspect ratios
-- [ ] Accessibility-node-first optimization where available
+See `LIVE_ASSISTANT.md` for setup, safety checks, supported behavior, and limitations.
+Implemented behavior is not a claim that every Sudoku app has been device-tested.

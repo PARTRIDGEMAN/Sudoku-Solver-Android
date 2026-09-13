@@ -22,4 +22,7 @@ Build a universal Android Sudoku assistant with Manual and Auto modes. It must d
 - Document non-obvious Android permission/service behavior in `docs/`.
 
 ## Current phase
-Phase 2 screen capture is implemented. Continue from `docs/ROADMAP.md`; physical-device capture validation is next, before Phase 3 board detection.
+Capture and grid detection have been tested by the user on a phone. Local OCR,
+solving, movable overlay, and verified autofill are implemented for live testing.
+Continue with the device checks and remaining work in `docs/ROADMAP.md` and
+`docs/LIVE_ASSISTANT.md`.

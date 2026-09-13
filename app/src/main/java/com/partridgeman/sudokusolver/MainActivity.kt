@@ -5,6 +5,9 @@ import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import com.partridgeman.sudokusolver.automation.AssistantStore
+import com.partridgeman.sudokusolver.automation.SudokuAccessibilityService
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -44,6 +47,12 @@ class MainActivity : ComponentActivity() {
             SudokuSolverApp(
                 captureState = captureState,
                 onScan = ::requestCapture,
+                assistantState = AssistantStore.state.collectAsStateWithLifecycle().value,
+                onEnableAssistant = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                onShowOverlay = {
+                    SudokuAccessibilityService.instance?.showOverlay()
+                    moveTaskToBack(true)
+                },
                 onCancelCapture = {
                     startService(Intent(this, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_CANCEL))
                 },
