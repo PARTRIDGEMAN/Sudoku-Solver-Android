@@ -57,19 +57,23 @@ class OfflinePuzzleReader : AutoCloseable {
 
         val cells = inks.mapIndexed { index, ink ->
             val contextual = RecognitionPolicy.resolve(sourceDigits[index], normalizedDigits[index])
+            val shape = if (ink.kind == InkKind.BLANK) null else CurvedDigitTopology.classify(ink.mask)
+            val resolved = CurvedDigitTopology.reconcile(contextual, shape)
             when (ink.kind) {
                 InkKind.BLANK -> CellReading(0, 1.0, ink.reason)
-                InkKind.DIGIT -> contextual
+                InkKind.DIGIT -> resolved
                 InkKind.AMBIGUOUS -> {
                     // A decorated/highlighted cell may confuse the ink segmentation. Rescue it
-                    // only when both independent contextual passes agree very strongly. Tiny
-                    // pencil-note OCR is filtered earlier by BoardOcrMapper's glyph-size checks.
+                    // when either both contextual OCR passes agree strongly, or when the glyph
+                    // itself has very strong curved-digit topology. Tiny pencil-note shapes do
+                    // not satisfy the topology size/hole checks.
                     val first = sourceDigits[index]
                     val second = normalizedDigits[index]
-                    if (first != null && second != null && first.text == second.text &&
-                        contextual.accepted && contextual.confidence >= 0.90) {
-                        contextual.copy(reason = "Two strong contextual OCR passes agree despite cell decoration")
-                    } else CellReading(null, contextual.confidence, ink.reason)
+                    val contextualAgreement = first != null && second != null && first.text == second.text &&
+                        resolved.accepted && resolved.confidence >= 0.90
+                    val topologyRescue = shape != null && shape.confidence >= 0.94 && resolved.accepted
+                    if (contextualAgreement || topologyRescue) resolved
+                    else CellReading(null, resolved.confidence, ink.reason)
                 }
             }
         }
