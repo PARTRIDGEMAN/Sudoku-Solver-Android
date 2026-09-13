@@ -14,31 +14,107 @@ data class NumberTarget(val digit: Int, val bounds: ImageRect, val confidence: D
 data class FillEntry(val index: Int, val digit: Int)
 
 object KeypadDetector {
+    private const val MIN_CONFIDENCE = 0.60
+    private const val MAX_CANDIDATES_PER_DIGIT = 3
+
+    /**
+     * Find a coherent 1-9 keypad cluster outside the Sudoku board.
+     *
+     * Older builds required every digit to occur exactly once anywhere outside the
+     * board. Real phone UIs contain timers, scores, battery percentages and call chips,
+     * so one unrelated duplicate was enough to disable autofill. Instead, partition
+     * candidates into spatial zones around the board and search each zone for one
+     * geometrically valid keypad. Multiple distinct valid keypads still fail closed.
+     */
     fun find(candidates: List<NumberTarget>, board: ImageRect): Map<Int, NumberTarget>? {
-        val filtered = candidates.filter { it.digit in 1..9 && it.confidence.isFinite() && it.confidence >= 0.90 &&
-            !intersects(it.bounds, board) && it.bounds.height >= board.height / 9 * 0.25 }
-        // Require one unambiguous target for each label. Duplicate counters/toolbars fail closed.
-        val groups = filtered.groupBy { it.digit }
-        if (groups.keys != (1..9).toSet() || groups.values.any { it.size != 1 }) return null
-        val keys = (1..9).map { groups.getValue(it).single() }
+        val minimumHeight = board.height / 9 * 0.20
+        val filtered = candidates.filter {
+            it.digit in 1..9 && it.confidence.isFinite() && it.confidence >= MIN_CONFIDENCE &&
+                !intersects(it.bounds, board) && it.bounds.height >= minimumHeight
+        }
+        if (filtered.isEmpty()) return null
+
+        val zones = listOf(
+            filtered.filter { it.bounds.center.y >= board.bottom },
+            filtered.filter { it.bounds.center.y <= board.top },
+            filtered.filter { it.bounds.center.x <= board.left },
+            filtered.filter { it.bounds.center.x >= board.right },
+        ).filter { it.isNotEmpty() }
+
+        val matches = zones.mapNotNull { findInZone(it, board) }
+            .distinctBy { keypadSignature(it) }
+        return matches.singleOrNull()
+    }
+
+    private fun findInZone(candidates: List<NumberTarget>, board: ImageRect): Map<Int, NumberTarget>? {
+        val choices = (1..9).associateWith { digit ->
+            candidates.filter { it.digit == digit }
+                .sortedByDescending { it.confidence }
+                .take(MAX_CANDIDATES_PER_DIGIT)
+        }
+        if (choices.values.any { it.isEmpty() }) return null
+
+        val valid = mutableListOf<List<NumberTarget>>()
+        val picked = ArrayList<NumberTarget>(9)
+
+        fun search(digit: Int) {
+            if (valid.size > 1) return
+            if (digit == 10) {
+                if (validateCluster(picked, board)) valid += picked.toList()
+                return
+            }
+            for (candidate in choices.getValue(digit)) {
+                if (picked.any { intersects(it.bounds, candidate.bounds) }) continue
+                picked += candidate
+                search(digit + 1)
+                picked.removeAt(picked.lastIndex)
+                if (valid.size > 1) return
+            }
+        }
+
+        search(1)
+        return valid.singleOrNull()?.associateBy { it.digit }
+    }
+
+    private fun validateCluster(keys: List<NumberTarget>, board: ImageRect): Boolean {
+        if (keys.size != 9 || keys.map { it.digit }.toSet() != (1..9).toSet()) return false
         val medianHeight = keys.map { it.bounds.height }.sorted()[4]
-        if (keys.any { it.bounds.height !in medianHeight * 0.55..medianHeight * 1.8 }) return null
-        for (a in keys.indices) for (b in a + 1 until keys.size) if (intersects(keys[a].bounds, keys[b].bounds)) return null
-        val bounds = ImageRect(keys.minOf { it.bounds.left }, keys.minOf { it.bounds.top }, keys.maxOf { it.bounds.right }, keys.maxOf { it.bounds.bottom })
-        if (intersects(bounds, board) || bounds.width > board.width * 1.5 || bounds.height > board.height * 0.65) return null
+        if (medianHeight <= 0.0 || keys.any { it.bounds.height !in medianHeight * 0.55..medianHeight * 1.8 }) return false
+
+        val bounds = ImageRect(
+            keys.minOf { it.bounds.left },
+            keys.minOf { it.bounds.top },
+            keys.maxOf { it.bounds.right },
+            keys.maxOf { it.bounds.bottom },
+        )
+        if (intersects(bounds, board) || bounds.width > board.width * 1.5 || bounds.height > board.height * 0.65) return false
+
         val rows = mutableListOf<MutableList<NumberTarget>>()
         for (key in keys.sortedBy { it.bounds.center.y }) {
-            val row = rows.firstOrNull { abs(it.first().bounds.center.y - key.bounds.center.y) <= medianHeight * 0.6 }
-            if (row == null) rows.add(mutableListOf(key)) else row.add(key)
+            val row = rows.firstOrNull {
+                abs(it.map { member -> member.bounds.center.y }.average() - key.bounds.center.y) <= medianHeight * 0.75
+            }
+            if (row == null) rows += mutableListOf(key) else row += key
         }
-        if (rows.size !in 1..3 || rows.any { it.size < 3 }) return null
-        if (rows.flatMap { it.sortedBy { key -> key.bounds.center.x } }.map { it.digit } != (1..9).toList()) return null
-        for (row in rows) {
-            val gaps = row.sortedBy { it.bounds.center.x }.zipWithNext().map { (a, b) -> b.bounds.center.x - a.bounds.center.x }
+        if (rows.size !in 1..3 || rows.any { it.size < 3 }) return false
+
+        val orderedRows = rows.sortedBy { row -> row.map { it.bounds.center.y }.average() }
+        val flattened = orderedRows.flatMap { row -> row.sortedBy { it.bounds.center.x } }
+        if (flattened.map { it.digit } != (1..9).toList()) return false
+
+        for (row in orderedRows) {
+            val sorted = row.sortedBy { it.bounds.center.x }
+            val gaps = sorted.zipWithNext().map { (a, b) -> b.bounds.center.x - a.bounds.center.x }
+            if (gaps.isEmpty() || gaps.any { it <= 0.0 }) return false
             val mean = gaps.average()
-            if (gaps.any { abs(it / mean - 1) > 0.35 }) return null
+            if (!mean.isFinite() || gaps.any { abs(it / mean - 1.0) > 0.40 }) return false
         }
-        return keys.associateBy { it.digit }
+        return true
+    }
+
+    private fun keypadSignature(keys: Map<Int, NumberTarget>): String = (1..9).joinToString("|") { digit ->
+        val b = keys.getValue(digit).bounds
+        "$digit:${b.left.toInt()},${b.top.toInt()},${b.right.toInt()},${b.bottom.toInt()}"
     }
 
     fun intersects(a: ImageRect, b: ImageRect) = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
