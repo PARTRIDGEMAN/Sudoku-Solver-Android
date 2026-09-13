@@ -1,5 +1,8 @@
 ## Goal
 Make the solver production-safe and implement universal, deterministic 9×9 Sudoku board detection that can be fully regression-tested from screenshots before device testing.
+> Historical geometry-only brief. The subsequent user request adds OCR and autofill;
+> see `PHASE3_STATUS.md` and `LIVE_ASSISTANT.md` for current scope.
+
 
 ## Read first
 
@@ -13,7 +16,7 @@ Make the solver production-safe and implement universal, deterministic 9×9 Sudo
 
 ## Required work
 
-1. Verify the 17 pinned PNG fixtures and `SHA256SUMS.txt` under `app/src/test/resources/sudoku/fixtures/real/`.
+1. Verify the two approved JPEG fixtures and `SHA256SUMS.txt` under `app/src/test/resources/sudoku/fixtures/approved/`.
 2. Add a platform-neutral pixel-image type plus Android `Bitmap` adapter so vision core runs in normal JVM tests.
 3. Harden the solver to classify **invalid givens**, **unsatisfiable**, **unique**, and **multiple-solution** puzzles. Only unique puzzles may ever become autofill-eligible in later phases.
 4. Implement deterministic universal board detection: locate a real 9×9 Sudoku grid, estimate/refine board geometry, derive 81 cell rectangles/centers, provide confidence/rejection reasons, and create a normalized/rectified board image for Phase 4 OCR.

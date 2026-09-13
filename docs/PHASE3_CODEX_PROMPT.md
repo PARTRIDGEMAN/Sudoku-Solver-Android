@@ -1,5 +1,8 @@
 # Codex implementation brief — Phase 3
 
+> Historical geometry-only brief. The subsequent user request adds OCR and autofill;
+> see `PHASE3_STATUS.md` and `LIVE_ASSISTANT.md` for current scope.
+
 Implement universal Sudoku **board detection** and harden the solver before any digit OCR or autofill work.
 
 Read first:
@@ -15,7 +18,7 @@ Do not hard-code phone resolutions, fixture filenames, app package names, or sou
 
 ## Work order
 
-1. Verify the 17 PNG fixtures and `SHA256SUMS.txt` are present under `app/src/test/resources/sudoku/fixtures/real/`.
+1. Verify the two approved JPEG fixtures and `SHA256SUMS.txt` are present under `app/src/test/resources/sudoku/fixtures/approved/`.
 2. Introduce a platform-neutral image representation and Android `Bitmap` adapter so the detector can run in ordinary JVM tests.
 3. Harden the Sudoku solver so it explicitly distinguishes invalid givens, unsatisfiable puzzles, unique solutions, and multiple solutions. Preserve clues and input immutability.
 4. Implement deterministic 9×9 board detection according to `PHASE3_VISION_REQUIREMENTS.md`.

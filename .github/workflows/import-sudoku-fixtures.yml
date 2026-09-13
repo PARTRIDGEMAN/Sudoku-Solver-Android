@@ -1,71 +1,38 @@
-name: Import approved Sudoku screenshot fixtures
+name: Verify approved Sudoku screenshot fixtures
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
       - .github/workflows/import-sudoku-fixtures.yml
+      - app/src/test/resources/sudoku/fixtures/**
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  import-fixtures:
+  verify-fixtures:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Download human-approved fixture screenshots
+      - name: Verify the retained human-approved inventory
         shell: bash
         run: |
           set -euo pipefail
-
           ROOT="app/src/test/resources/sudoku/fixtures/approved"
-          OLD="app/src/test/resources/sudoku/fixtures/real"
           URLS="app/src/test/resources/sudoku/fixtures/APPROVED_URLS.txt"
-
-          rm -rf "$ROOT"
-          mkdir -p "$ROOT"
-
-          while read -r name url; do
-            [[ -n "$name" && -n "$url" ]]
-            curl --fail --location --silent --show-error \
-              --retry 3 --retry-delay 1 \
-              "$url" --output "$ROOT/$name"
-          done < "$URLS"
-
           count="$(find "$ROOT" -maxdepth 1 -type f -name '*.jpg' | wc -l | tr -d ' ')"
-          [[ "$count" == "4" ]] || { echo "expected 4 approved screenshots, found $count"; exit 1; }
-
-          for image in "$ROOT"/*.jpg; do
-            size="$(stat -c%s "$image")"
-            [[ "$size" -gt 20000 ]] || { echo "fixture unexpectedly small: $image ($size bytes)"; exit 1; }
-            file "$image" | grep -q 'JPEG image data' || { echo "fixture is not JPEG: $image"; exit 1; }
-            echo "validated $image: $size bytes"
-          done
-
-          (
-            cd "$ROOT"
-            sha256sum ./*.jpg > SHA256SUMS.txt
-          )
-
-          # The user explicitly rejected the previous fixture corpus.
-          rm -rf "$OLD"
-
-      - name: Commit approved fixture assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          FIXTURES="app/src/test/resources/sudoku/fixtures"
-
-          if [[ -z "$(git status --porcelain -- "$FIXTURES")" ]]; then
-            echo "Approved fixtures already match the selected screenshots."
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A "$FIXTURES"
-          git commit -m "test: keep four human-approved Sudoku screenshots"
-          git push
+          [[ "$count" == "2" ]] || { echo "expected 2 approved screenshots, found $count"; exit 1; }
+          (cd "$ROOT" && sha256sum --check SHA256SUMS.txt)
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path("app/src/test/resources/sudoku/fixtures")
+          urls = {line.split()[0] for line in (root / "APPROVED_URLS.txt").read_text(encoding="utf-8-sig").splitlines() if line.strip()}
+          actual = {p.name for p in (root / "approved").glob("*.jpg")}
+          hashes = {line.split()[1].removeprefix("./") for line in (root / "approved/SHA256SUMS.txt").read_text().splitlines() if line.strip()}
+          geometry = {line.split(",")[0] for line in (root / "approved/geometry.csv").read_text().splitlines() if line.strip() and not line.startswith("#")}
+          assert urls == hashes == geometry == actual, (urls, hashes, geometry, actual)
+          PY

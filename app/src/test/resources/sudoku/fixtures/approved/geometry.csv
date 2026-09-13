@@ -1,0 +1,4 @@
+# Manually read from full-size images, BEFORE running the detector. Coordinates are grid stroke centers.
+# filename,width,height,left,top,right,bottom,tolerance
+approved-04.jpg,1080,1920,19,229,1061,1271,9
+approved-10.jpg,450,800,0,101,450,551,3

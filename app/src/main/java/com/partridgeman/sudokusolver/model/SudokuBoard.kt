@@ -1,12 +1,20 @@
 package com.partridgeman.sudokusolver.model
 
-data class SudokuBoard(val cells: List<Int>) {
+class SudokuBoard(cells: List<Int>) {
+    val cells: List<Int> = java.util.Collections.unmodifiableList(ArrayList(cells))
+
+    override fun equals(other: Any?): Boolean = other is SudokuBoard && cells == other.cells
+    override fun hashCode(): Int = cells.hashCode()
+    override fun toString(): String = "SudokuBoard(cells=$cells)"
     init {
         require(cells.size == CELL_COUNT) { "A Sudoku board must contain exactly 81 cells." }
         require(cells.all { it in 0..9 }) { "Cells must contain values from 0 through 9." }
     }
 
-    operator fun get(row: Int, column: Int): Int = cells[row * SIZE + column]
+    operator fun get(row: Int, column: Int): Int {
+        require(row in 0 until SIZE && column in 0 until SIZE)
+        return cells[row * SIZE + column]
+    }
 
     fun withCell(row: Int, column: Int, value: Int): SudokuBoard {
         require(row in 0 until SIZE && column in 0 until SIZE)
