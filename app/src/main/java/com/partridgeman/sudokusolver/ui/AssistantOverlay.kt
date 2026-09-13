@@ -53,6 +53,22 @@ class AssistantOverlay(private val service: SudokuAccessibilityService) {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
             setContent {
                 val state by AssistantStore.state.collectAsState()
+                LaunchedEffect(state.filling, state.analysis) {
+                    if (state.filling) {
+                        // Let the dedicated fill UI remeasure before choosing a safe corner.
+                        kotlinx.coroutines.delay(80)
+                        val analysis = state.analysis
+                        if (analysis != null) {
+                            val forbidden = buildList {
+                                add(analysis.detection.geometry.bounds)
+                                analysis.keypad?.values?.forEach { add(it.bounds) }
+                            }
+                            prepareForFill(forbidden)
+                        }
+                    } else {
+                        restoreAfterFill()
+                    }
+                }
                 MaterialTheme { FloatingAssistant(state, service::scan, service::fill, service::stop,
                     onClose = { service.stop(); close() }, onDrag = ::move,
                     onAuto = { value -> AssistantStore.update { it.copy(auto = value, reviewed = false) } },
