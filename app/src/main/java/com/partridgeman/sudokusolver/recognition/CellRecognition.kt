@@ -8,18 +8,57 @@ import kotlin.math.max
 data class DigitReading(val text: String, val confidence: Float)
 data class CellReading(val value: Int?, val confidence: Double, val reason: String) {
     val accepted: Boolean get() = value != null && confidence.isFinite() && confidence >= MIN_CONFIDENCE
-    companion object { const val MIN_CONFIDENCE = 0.90 }
+    companion object { const val MIN_CONFIDENCE = 0.65 }
 }
 
 object RecognitionPolicy {
+    private const val SINGLE_PASS_MIN = 0.72f
+    private const val AGREEMENT_SOURCE_MIN = 0.25f
+
+    /** Legacy strict helper retained for tests/callers that explicitly require two strong matching reads. */
     fun agree(first: DigitReading?, second: DigitReading?): CellReading {
         if (first == null || second == null || first.text != second.text || !first.text.matches(Regex("[1-9]"))) {
             return CellReading(null, 0.0, "Digit readings disagree or contain notes")
         }
         val confidence = minOf(first.confidence, second.confidence).toDouble()
         return if (confidence.isFinite() && confidence >= CellReading.MIN_CONFIDENCE)
-            CellReading(first.text.toInt(), confidence, "Two matching digit readings")
+            CellReading(first.text.toInt(), confidence, "Two matching strong digit readings")
         else CellReading(null, confidence.takeIf { it.isFinite() } ?: 0.0, "Digit confidence is too low")
+    }
+
+    /**
+     * Fuse two contextual OCR passes without requiring both engines to report 90%+.
+     * Agreement is stronger evidence than either confidence alone; a single read
+     * is accepted only when it is independently strong. Conflicting reads fail closed.
+     */
+    fun resolve(first: DigitReading?, second: DigitReading?): CellReading {
+        fun valid(reading: DigitReading?): DigitReading? = reading?.takeIf {
+            it.text.matches(Regex("[1-9]")) && it.confidence.isFinite() && it.confidence in 0f..1f
+        }
+        val a = valid(first)
+        val b = valid(second)
+        if (a == null && b == null) return CellReading(null, 0.0, "No contextual digit reading")
+
+        if (a != null && b != null && a.text == b.text) {
+            val low = minOf(a.confidence, b.confidence)
+            val combined = 1.0 - (1.0 - a.confidence) * (1.0 - b.confidence)
+            return if (low >= AGREEMENT_SOURCE_MIN && combined >= CellReading.MIN_CONFIDENCE)
+                CellReading(a.text.toInt(), combined, "Contextual OCR passes agree")
+            else CellReading(null, combined, "Matching OCR readings are still too weak")
+        }
+
+        if (a == null || b == null) {
+            val only = a ?: b!!
+            return if (only.confidence >= SINGLE_PASS_MIN)
+                CellReading(only.text.toInt(), only.confidence.toDouble(), "One strong contextual OCR reading")
+            else CellReading(null, only.confidence.toDouble(), "Only one weak contextual OCR reading")
+        }
+
+        val high = if (a.confidence >= b.confidence) a else b
+        val low = if (high === a) b else a
+        return if (high.confidence >= 0.96f && high.confidence - low.confidence >= 0.50f)
+            CellReading(high.text.toInt(), high.confidence.toDouble(), "One contextual OCR reading strongly dominates")
+        else CellReading(null, maxOf(a.confidence, b.confidence).toDouble(), "Contextual OCR readings disagree")
     }
 
     fun board(readings: List<CellReading>): SudokuBoard? = if (readings.size == 81 && readings.all { it.accepted && it.value in 0..9 })
@@ -90,7 +129,6 @@ object CellInkAnalyzer {
             if (digit) "One full-sized glyph" else "Faint mark, pencil notes, clipped digit, or cell decoration")
     }
 }
-
 
 /** Inspect the usual interior first; retry clipped glyphs with a wider, independently checked crop. */
 object CellCropAnalyzer {
