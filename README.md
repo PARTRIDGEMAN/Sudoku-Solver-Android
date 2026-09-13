@@ -30,3 +30,11 @@ See `docs/ARCHITECTURE.md` and `docs/ROADMAP.md` for the planned implementation.
 
 Use JDK 17 and the checked-in Gradle wrapper. See [Build setup](docs/BUILDING.md)
 for Android SDK requirements and clean build commands.
+
+## Screen capture preview
+
+Tap **Scan Puzzle**, allow Android's screen capture prompt, and open your Sudoku
+app within five seconds. Return to Sudoku Solver to see the last successful
+screenshot. Both modes currently capture only; recognition and autofill are
+future work. See [Screen capture](docs/SCREEN_CAPTURE.md) for behavior and device
+verification steps.

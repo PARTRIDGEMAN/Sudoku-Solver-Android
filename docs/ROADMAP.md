@@ -8,10 +8,14 @@
 - [x] Accessibility service boundary
 
 ## Phase 2 — Capture
-- [ ] MediaProjection permission flow
-- [ ] Foreground capture service for modern Android
-- [ ] One-shot screen capture
-- [ ] Debug screen for saving/previewing captures
+- [x] MediaProjection permission flow
+- [x] Foreground capture service for modern Android
+- [x] One-shot screen capture
+- [x] In-memory debug preview of the last successful capture
+- [ ] Physical-device verification: consent, repeated captures, cancellation, and resource cleanup (see `docs/SCREEN_CAPTURE.md`)
+
+Capture implementation is ready for device validation. Screenshot file export is deferred;
+issue #1 only requires a preview. Complete the device checks before board recognition work.
 
 ## Phase 3 — Universal board detection
 - [ ] Threshold/grayscale preprocessing
