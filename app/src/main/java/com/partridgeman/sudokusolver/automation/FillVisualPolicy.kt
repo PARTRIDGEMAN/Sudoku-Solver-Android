@@ -5,12 +5,14 @@ import com.partridgeman.sudokusolver.recognition.InkKind
 /** Autofill-specific interpretation of the cheap per-cell ink detector. */
 object FillVisualPolicy {
     /**
-     * Only a full-sized digit glyph proves that a cell is occupied during autofill.
+     * During checkpointed autofill we only need to know whether a cell visibly contains
+     * something. User-entered digits can become AMBIGUOUS while selected/highlighted,
+     * so both DIGIT and AMBIGUOUS count as present.
      *
-     * The initial puzzle scan intentionally treats AMBIGUOUS as unsafe, but the live
-     * Sudoku UI can add selection/row/column shading that makes a genuinely empty cell
-     * ambiguous. Counting that decoration as a number caused false "puzzle changed"
-     * stops immediately after selecting the next blank.
+     * This is safe because the runner no longer compares all 81 cells for exact occupancy:
+     * it only requires original clues and cells already issued by the ledger to remain
+     * non-blank. Future cells are ignored until their turn, so selection/row/column shading
+     * cannot masquerade as a puzzle mutation.
      */
-    fun occupied(kinds: List<InkKind>): List<Boolean> = kinds.map { it == InkKind.DIGIT }
+    fun occupied(kinds: List<InkKind>): List<Boolean> = kinds.map { it != InkKind.BLANK }
 }
