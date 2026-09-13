@@ -172,13 +172,14 @@ class SudokuAccessibilityService : AccessibilityService(), LifecycleOwner, Saved
         val (width, height) = displaySize()
         val rotation = getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY).rotation
 
-        // Only windows that can actually replace/intercept the Sudoku UI should block a scan.
-        // Samsung exposes ordinary status/navigation/edge-panel surfaces as higher-layer
-        // TYPE_SYSTEM windows. The previous "any overlapping higher layer" rule therefore
-        // rejected perfectly clean puzzle screens. Accessibility overlays are handled
-        // separately at gesture time, while harmless system chrome is intentionally ignored.
+        // Only windows that can actually replace/intercept a meaningful part of the
+        // Sudoku UI should block a scan. Samsung exposes ordinary system surfaces and
+        // small transient app windows (for example an ongoing-call chip) above the app.
+        // Treating any one-pixel overlap as a dialog caused false positives on clean
+        // puzzle screens. Keyboards always block; higher application windows only block
+        // when they cover a material fraction of the foreground app.
         check(windows.none { candidate -> isBlockingWindow(candidate, application, bounds) }) {
-            "Close dialogs or the keyboard before scanning."
+            "Close large dialogs or the keyboard before scanning."
         }
         return TargetWindow(name, application.id, bounds.toImageRect(), width, height, rotation)
     }
@@ -189,7 +190,16 @@ class SudokuAccessibilityService : AccessibilityService(), LifecycleOwner, Saved
             AccessibilityWindowInfo.TYPE_INPUT_METHOD -> true
             AccessibilityWindowInfo.TYPE_APPLICATION -> {
                 val other = Rect().also(candidate::getBoundsInScreen)
-                Rect.intersects(other, appBounds)
+                val intersection = Rect()
+                if (!intersection.setIntersect(other, appBounds)) return false
+
+                val overlapArea = intersection.width().toLong() * intersection.height().toLong()
+                val appArea = appBounds.width().toLong() * appBounds.height().toLong()
+                if (appArea <= 0L) return false
+
+                // A real dialog/panel generally covers far more than this. Small call
+                // chips, bubbles and Samsung transient surfaces stay below the threshold.
+                overlapArea.toDouble() / appArea.toDouble() >= 0.03
             }
             else -> false
         }
