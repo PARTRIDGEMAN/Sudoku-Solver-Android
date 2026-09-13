@@ -82,24 +82,35 @@ class OfflinePuzzleReader : AutoCloseable {
             }
         }
 
-        // Last-resort conservative repair: if every remaining unclear cell is a
-        // visible curved glyph, try only the topology-compatible family values.
-        // Accept a repair only when exactly one such assignment produces a unique
-        // Sudoku. This fixes stable OCR misses without guessing blank cells.
-        val curvedCandidates = rawCells.indices.mapNotNull { index ->
-            if (rawCells[index].accepted) return@mapNotNull null
-            val shape = shapes[index] ?: return@mapNotNull null
-            if (shape.confidence < 0.86) return@mapNotNull null
-            val rawTexts = listOfNotNull(sourceDigits[index]?.text, normalizedDigits[index]?.text)
-            if ("4" in rawTexts) return@mapNotNull null // closed-top 4 protection
+        // Last-resort conservative repair for visually occupied clue cells. Curved
+        // topology narrows 6/8/9; weak OCR narrows other digits; if a full-sized
+        // glyph produced no OCR token at all, its candidate family is 1..9. The
+        // repair layer still accepts nothing unless exactly one candidate assignment
+        // yields a uniquely solvable Sudoku, and it never promotes a blank cell.
+        val visualCandidates = rawCells.indices.mapNotNull { index ->
+            if (rawCells[index].accepted || inks[index].kind == InkKind.BLANK) return@mapNotNull null
+
+            val rawOptions = listOfNotNull(sourceDigits[index]?.text, normalizedDigits[index]?.text)
+                .mapNotNull { text -> text.takeIf { it.matches(Regex("[1-9]")) }?.toInt() }
+                .toSet()
+            val shape = shapes[index]
+            val shapeOptions = if (shape != null && shape.confidence >= 0.86 && 4 !in rawOptions) {
+                when {
+                    shape.holeCount >= 2 -> setOf(8)
+                    shape.holeCount == 1 -> setOf(6, 9)
+                    else -> emptySet()
+                }
+            } else emptySet()
+
             val options = when {
-                shape.holeCount >= 2 -> setOf(8)
-                shape.holeCount == 1 -> setOf(6, 9)
+                shapeOptions.isNotEmpty() -> shapeOptions
+                inks[index].kind == InkKind.DIGIT && rawOptions.isNotEmpty() -> rawOptions
+                inks[index].kind == InkKind.DIGIT -> (1..9).toSet()
                 else -> emptySet()
             }
             if (options.isEmpty()) null else index to options
         }.toMap()
-        val cells = RecognitionConstraintRepair.repair(rawCells, curvedCandidates)
+        val cells = RecognitionConstraintRepair.repair(rawCells, visualCandidates)
 
         val board = RecognitionPolicy.board(cells)
         val plan = AutofillPlan.create(cells, detection.geometry)
