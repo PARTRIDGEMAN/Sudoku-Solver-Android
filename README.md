@@ -25,3 +25,8 @@ Universal Android Sudoku assistant that detects a visible 9×9 Sudoku board, sol
 - Vision pipeline for grid and digit recognition
 
 See `docs/ARCHITECTURE.md` and `docs/ROADMAP.md` for the planned implementation.
+
+## Build
+
+Use JDK 17 and the checked-in Gradle wrapper. See [Build setup](docs/BUILDING.md)
+for Android SDK requirements and clean build commands.
