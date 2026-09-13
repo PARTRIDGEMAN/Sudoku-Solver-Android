@@ -27,37 +27,45 @@ interface FastAutofillPort {
 }
 
 object FillSelectionVerifier {
+    fun isSelected(snapshot: FillVisualSnapshot, index: Int): Boolean {
+        if (index !in 0..80) return false
+        if (snapshot.selectedCell != null) return snapshot.selectedCell == index
+        if (snapshot.backgrounds.size != 81) return false
+        return uniqueColored(snapshot, index)
+    }
+
     fun matches(before: FillVisualSnapshot, after: FillVisualSnapshot, index: Int): Boolean {
         if (after.selectedCell != null) return after.selectedCell == index
         if (before.backgrounds.size != 81 || after.backgrounds.size != 81 || index !in 0..80) return false
 
-        val color = after.backgrounds[index]
-        fun distance(a: Int, b: Int) = (0..16 step 8).maxOf { shift ->
-            abs((a ushr shift and 255) - (b ushr shift and 255))
-        }
-        fun colored(value: Int): Boolean {
-            val channels = (0..16 step 8).map { shift -> value ushr shift and 255 }
-            return channels.max() - channels.min() >= 24
-        }
-        fun uniqueIn(snapshot: FillVisualSnapshot): Boolean = colored(snapshot.backgrounds[index]) &&
-            snapshot.backgrounds.indices.filter { it != index }
-                .all { other -> distance(snapshot.backgrounds[other], snapshot.backgrounds[index]) >= 12 }
-
-        // Most apps change the target's fill when selected. Some, including the
-        // device fixture that motivated this path, start with R1C1 already selected;
-        // accept a persistent highlight only when it is uniquely identifiable both
-        // before and after the tap.
-        val becameSelected = distance(before.backgrounds[index], color) >= 18 && uniqueIn(after)
-        val stayedSelected = distance(before.backgrounds[index], color) < 12 && uniqueIn(before) && uniqueIn(after)
+        val distance = colorDistance(before.backgrounds[index], after.backgrounds[index])
+        // Most apps change the target's fill when selected. Some start with a blank
+        // already selected; accept a persistent highlight only when it is uniquely
+        // identifiable both before and after the tap.
+        val becameSelected = distance >= 18 && uniqueColored(after, index)
+        val stayedSelected = distance < 12 && uniqueColored(before, index) && uniqueColored(after, index)
         return becameSelected || stayedSelected
+    }
+
+    private fun uniqueColored(snapshot: FillVisualSnapshot, index: Int): Boolean {
+        val color = snapshot.backgrounds[index]
+        val channels = (0..16 step 8).map { shift -> color ushr shift and 255 }
+        if (channels.max() - channels.min() < 24) return false
+        return snapshot.backgrounds.indices.filter { it != index }
+            .all { other -> colorDistance(snapshot.backgrounds[other], color) >= 12 }
+    }
+
+    private fun colorDistance(a: Int, b: Int): Int = (0..16 step 8).maxOf { shift ->
+        abs((a ushr shift and 255) - (b ushr shift and 255))
     }
 }
 
 /**
  * Autofill runner that never invokes OCR or the Sudoku solver inside the hot loop.
- * Each step still fails closed if the app/grid moves, another cell changes, the
- * requested cell cannot be visually verified, or the intended blank does not
- * become occupied after the keypad tap.
+ *
+ * The loop is pipelined so, after the first cell, one screenshot verifies both the
+ * previous number entry and selection of the next cell. This keeps visual safety
+ * checks while avoiding two screenshot round-trips for every blank.
  */
 class FastAutofillRunner {
     suspend fun run(
@@ -68,28 +76,56 @@ class FastAutofillRunner {
         progress: (Int, Int) -> Unit = { _, _ -> },
     ) {
         require(keys.keys == (1..9).toSet()) { "Number buttons were not verified" }
+        if (plan.entries.isEmpty()) return
 
-        var before = port.inspect()
-        validate(before, plan, target, 0)
+        var state = port.inspect()
+        validate(state, plan, target, 0)
+        var currentAlreadySelected = FillSelectionVerifier.isSelected(state, plan.entries.first().index)
 
         for ((completed, entry) in plan.entries.withIndex()) {
             coroutineContext.ensureActive()
-            validate(before, plan, target, completed)
+            validate(state, plan, target, completed)
 
-            port.tap(plan.cellTarget(entry), target)
-            val selected = port.inspect()
-            validate(selected, plan, target, completed)
-            check(FillSelectionVerifier.matches(before, selected, entry.index)) {
-                "Could not verify the selected cell. Use cell-first input and rescan."
+            val selected = if (currentAlreadySelected) {
+                check(FillSelectionVerifier.isSelected(state, entry.index)) {
+                    "Could not verify the selected cell. Use cell-first input and rescan."
+                }
+                state
+            } else {
+                port.tap(plan.cellTarget(entry), target)
+                val snapshot = port.inspect()
+                validate(snapshot, plan, target, completed)
+                check(FillSelectionVerifier.matches(state, snapshot, entry.index)) {
+                    "Could not verify the selected cell. Use cell-first input and rescan."
+                }
+                snapshot
             }
 
             coroutineContext.ensureActive()
             port.tap(keys.getValue(entry.digit).bounds.center, target)
-            val after = port.inspect()
-            validate(after, plan, target, completed + 1)
 
-            progress(completed + 1, plan.entries.size)
-            before = after
+            val nextEntry = plan.entries.getOrNull(completed + 1)
+            if (nextEntry == null) {
+                val after = port.inspect()
+                validate(after, plan, target, completed + 1)
+                progress(completed + 1, plan.entries.size)
+                state = after
+                currentAlreadySelected = false
+            } else {
+                // Select the next blank before capturing. The next screenshot now proves
+                // both that this number was entered into the intended cell and that the
+                // next target is selected. If the number tap failed or another cell
+                // changed, occupancy validation fails before another digit is emitted.
+                port.tap(plan.cellTarget(nextEntry), target)
+                val nextSelected = port.inspect()
+                validate(nextSelected, plan, target, completed + 1)
+                check(FillSelectionVerifier.isSelected(nextSelected, nextEntry.index)) {
+                    "Could not verify the next selected cell. Autofill stopped."
+                }
+                progress(completed + 1, plan.entries.size)
+                state = nextSelected
+                currentAlreadySelected = true
+            }
         }
     }
 
