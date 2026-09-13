@@ -99,9 +99,9 @@ object CurvedDigitTopology {
     }
 
     /**
-     * Fuse topology with contextual OCR. Shape evidence is allowed to resolve
-     * disagreements inside {6,8,9}; it only overrides a different digit when the
-     * OCR read is weak and the topology evidence is exceptionally strong.
+     * Fuse topology with contextual OCR. Two enclosed loops are effectively
+     * diagnostic of an 8. A very strong single-loop 6/9 shape can also override
+     * unstable OCR, except when OCR says 4 because some fonts draw a closed-top 4.
      */
     fun reconcile(ocr: CellReading, shape: CurvedDigitReading?): CellReading {
         shape ?: return ocr
@@ -116,16 +116,20 @@ object CurvedDigitTopology {
             )
         }
 
+        if (shape.digit == 8 && shape.holeCount >= 2 && shape.confidence >= 0.93) {
+            return CellReading(8, shape.confidence, "Two enclosed glyph loops identify an 8")
+        }
+
+        if (shape.digit in setOf(6, 9) && shape.confidence >= 0.95 && value != 4) {
+            return CellReading(shape.digit, shape.confidence, "Strong single-loop topology resolved 6/9 OCR instability")
+        }
+
         if (value in curved && shape.confidence >= 0.88) {
             return CellReading(shape.digit, shape.confidence, "Curved-digit topology resolved OCR ambiguity")
         }
 
         if (!ocr.accepted && shape.confidence >= 0.94) {
             return CellReading(shape.digit, shape.confidence, "Strong curved-digit topology rescued an unclear OCR cell")
-        }
-
-        if (ocr.accepted && value !in curved && ocr.confidence < 0.80 && shape.confidence >= 0.97) {
-            return CellReading(shape.digit, shape.confidence, "Very strong curved-digit topology overrode weak OCR")
         }
 
         return ocr
